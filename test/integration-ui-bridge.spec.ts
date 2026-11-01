@@ -439,6 +439,8 @@ flowchart TD
       if (existingRepos.length === 0) {
         ciSandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'deckseb-ci-adjacent-'))
         execSync(`git init -b main "${ciSandbox}"`)
+        execSync(`git -C "${ciSandbox}" config user.name "DeckSeb CI"`)
+        execSync(`git -C "${ciSandbox}" config user.email "deckseb-ci@paheseb.local"`)
         await fs.writeFile(path.join(ciSandbox, 'README.md'), '# Dummy adjacent repo\n')
         execSync(`git -C "${ciSandbox}" add README.md && git -C "${ciSandbox}" commit -m "initial"`)
         baselines.set(ciSandbox, getGitStatus(ciSandbox))
