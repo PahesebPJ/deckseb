@@ -7,9 +7,13 @@ If a user asked you (an AI coding agent) to install or set up `deckseb`:
 
 ---
 
-## Option A: Install via npm (Recommended)
+## Option A: Run directly with npx or install via npm (Recommended)
 
 ```sh
+# Run instant UI without local build:
+npx deckseb ui
+
+# Or install globally:
 npm install -g deckseb
 deckseb setup
 ```

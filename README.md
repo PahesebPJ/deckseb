@@ -147,6 +147,24 @@ deckseb setup
 
 ```sh
 # Clonar repositorio
+### Instalación Instantánea (Recomendada con `npx` / `npm`)
+
+Cualquier usuario puede lanzar la interfaz gráfica macOS Sequoia **al instante sin compilar Rust**:
+
+```sh
+# Ejecución directa sin instalación previa:
+npx deckseb ui
+
+# O instalación global:
+npm install -g deckseb
+deckseb ui
+```
+
+Esto abrirá la consola de misión en `http://127.0.0.1:4321` conectada en vivo con tu terminal y ecosistema local.
+
+### Instalación desde Código Fuente (Desarrollo y Binario Nativo Tauri)
+
+```sh
 git clone https://github.com/PahesebPJ/deckseb.git
 cd deckseb
 
@@ -183,6 +201,7 @@ npm run tauri build
 El ejecutable `deckseb` provee herramientas de diagnóstico, integración con `hubseb` y detección local de artefactos:
 
 ```sh
+deckseb ui [--port 4321]   # Lanza la consola gráfica macOS Sequoia en navegador o ventana dedicada
 deckseb status [--json]    # Inspecciona el estado del ecosistema *seb, topología y subagentes
 deckseb setup              # Registra deckseb como nodo hoja (ui.deck) en hubseb topology.json
 deckseb purge              # Elimina deckseb de topology.json limpiamente

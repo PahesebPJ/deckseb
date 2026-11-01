@@ -3,9 +3,21 @@
   "version": "0.1.0",
   "description": "Desktop mission control, PTY terminal hub, and passive telemetry viewer for *seb ecosystem",
   "license": "MIT",
+  "author": "PahesebPJ",
+  "homepage": "https://github.com/PahesebPJ/deckseb#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PahesebPJ/deckseb.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PahesebPJ/deckseb/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "exports": {
     ".": {
@@ -18,15 +30,17 @@
   },
   "files": [
     "dist",
-    "src-tauri",
-    "README.md"
+    "src/styles",
+    "README.md",
+    "AGENT_INSTALL.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node -e \"if (fs.existsSync('dist/cli/deckseb.js')) fs.chmodSync('dist/cli/deckseb.js', 0o755)\"",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.spec.ts\"",
-    "deckseb": "node src/cli/deckseb.ts"
+    "deckseb": "node src/cli/deckseb.ts",
+    "ui": "node src/cli/deckseb.ts ui"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
