@@ -1,0 +1,1011 @@
+/* ==========================================================================
+   deckseb — macOS Sequoia Design System (Light & Dark Mode)
+   ========================================================================== */
+
+:root,
+[data-theme="dark"] {
+  --mac-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", "Segoe UI", Roboto, sans-serif;
+  --mac-font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  /* Surfaces & Translucency (Dark) */
+  --mac-bg-window: rgba(26, 27, 31, 0.94);
+  --mac-bg-titlebar: rgba(32, 33, 38, 0.92);
+  --mac-bg-sidebar: rgba(20, 21, 24, 0.88);
+  --mac-bg-terminal: #0d0f14;
+  --mac-bg-terminal-header: #14171f;
+  --mac-bg-drawer: rgba(22, 24, 29, 0.96);
+  --mac-bg-card: rgba(38, 41, 48, 0.65);
+  --mac-bg-card-hover: rgba(50, 54, 63, 0.8);
+  --mac-bg-chip: rgba(255, 255, 255, 0.08);
+  --mac-bg-chip-hover: rgba(255, 255, 255, 0.14);
+  --mac-bg-input: rgba(15, 17, 22, 0.7);
+
+  /* Borders */
+  --mac-border: rgba(255, 255, 255, 0.12);
+  --mac-border-subtle: rgba(255, 255, 255, 0.06);
+  --mac-border-focus: #0a84ff;
+
+  /* Text */
+  --mac-text-primary: #f5f5f7;
+  --mac-text-secondary: #a1a1a6;
+  --mac-text-muted: #6e6e73;
+  --mac-text-on-accent: #ffffff;
+
+  /* Brand & Accents */
+  --mac-accent: #0a84ff;
+  --mac-accent-hover: #0071e3;
+  --mac-accent-subtle: rgba(10, 132, 255, 0.16);
+
+  /* Traffic Lights */
+  --mac-traffic-close: #ff5f57;
+  --mac-traffic-close-border: #e0443e;
+  --mac-traffic-minimize: #febc2e;
+  --mac-traffic-minimize-border: #dea123;
+  --mac-traffic-maximize: #28c840;
+  --mac-traffic-maximize-border: #1aab29;
+
+  /* Semantic Alerts */
+  --mac-color-healthy: #30d158;
+  --mac-color-healthy-subtle: rgba(48, 209, 88, 0.15);
+  --mac-color-warning: #ff9f0a;
+  --mac-color-warning-subtle: rgba(255, 159, 10, 0.15);
+  --mac-color-critical: #ff453a;
+  --mac-color-critical-subtle: rgba(255, 69, 58, 0.15);
+  --mac-color-purple: #bf5af2;
+  --mac-color-purple-subtle: rgba(191, 90, 242, 0.15);
+  --mac-color-cyan: #64d2ff;
+  --mac-color-cyan-subtle: rgba(100, 210, 255, 0.15);
+
+  /* Shadows */
+  --mac-shadow-window: 0 24px 64px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35);
+  --mac-shadow-drawer: -8px 0 32px rgba(0, 0, 0, 0.45);
+  --mac-shadow-card: 0 4px 12px rgba(0, 0, 0, 0.25);
+  --mac-shadow-chip: 0 1px 3px rgba(0, 0, 0, 0.2);
+
+  /* Terminal Colors */
+  --term-black: #1e1e24;
+  --term-red: #ff6b6b;
+  --term-green: #51cf66;
+  --term-yellow: #fcc419;
+  --term-blue: #4dabf7;
+  --term-magenta: #cc5de8;
+  --term-cyan: #22b8cf;
+  --term-white: #e9ecef;
+  --term-gray: #868e96;
+}
+
+[data-theme="light"] {
+  /* Surfaces & Translucency (Light) */
+  --mac-bg-window: rgba(246, 246, 248, 0.94);
+  --mac-bg-titlebar: rgba(238, 238, 242, 0.92);
+  --mac-bg-sidebar: rgba(232, 233, 238, 0.88);
+  --mac-bg-terminal: #1a1c22;
+  --mac-bg-terminal-header: #21242c;
+  --mac-bg-drawer: rgba(252, 252, 254, 0.96);
+  --mac-bg-card: rgba(255, 255, 255, 0.85);
+  --mac-bg-card-hover: rgba(255, 255, 255, 1);
+  --mac-bg-chip: rgba(0, 0, 0, 0.05);
+  --mac-bg-chip-hover: rgba(0, 0, 0, 0.09);
+  --mac-bg-input: rgba(255, 255, 255, 0.9);
+
+  /* Borders */
+  --mac-border: rgba(0, 0, 0, 0.12);
+  --mac-border-subtle: rgba(0, 0, 0, 0.06);
+  --mac-border-focus: #007aff;
+
+  /* Text */
+  --mac-text-primary: #1c1c1e;
+  --mac-text-secondary: #48484a;
+  --mac-text-muted: #8e8e93;
+  --mac-text-on-accent: #ffffff;
+
+  /* Brand & Accents */
+  --mac-accent: #007aff;
+  --mac-accent-hover: #0062cc;
+  --mac-accent-subtle: rgba(0, 122, 255, 0.12);
+
+  /* Traffic Lights */
+  --mac-traffic-close: #ff5f57;
+  --mac-traffic-close-border: #e0443e;
+  --mac-traffic-minimize: #febc2e;
+  --mac-traffic-minimize-border: #dea123;
+  --mac-traffic-maximize: #28c840;
+  --mac-traffic-maximize-border: #1aab29;
+
+  /* Semantic Alerts */
+  --mac-color-healthy: #28cd41;
+  --mac-color-healthy-subtle: rgba(40, 205, 65, 0.15);
+  --mac-color-warning: #ff9500;
+  --mac-color-warning-subtle: rgba(255, 149, 0, 0.15);
+  --mac-color-critical: #ff3b30;
+  --mac-color-critical-subtle: rgba(255, 59, 48, 0.15);
+  --mac-color-purple: #af52de;
+  --mac-color-purple-subtle: rgba(175, 82, 222, 0.15);
+  --mac-color-cyan: #5ac8fa;
+  --mac-color-cyan-subtle: rgba(90, 200, 250, 0.15);
+
+  /* Shadows */
+  --mac-shadow-window: 0 20px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  --mac-shadow-drawer: -6px 0 24px rgba(0, 0, 0, 0.12);
+  --mac-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --mac-shadow-chip: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+  /* Terminal Colors */
+  --term-black: #2b2d42;
+  --term-red: #e03131;
+  --term-green: #2f9e44;
+  --term-yellow: #f59f00;
+  --term-blue: #1971c2;
+  --term-magenta: #9c36b5;
+  --term-cyan: #0c8599;
+  --term-white: #f8f9fa;
+  --term-gray: #adb5bd;
+}
+
+/* Base Resets & Layout */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--mac-font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--mac-text-primary);
+  background: transparent;
+  user-select: none;
+}
+
+/* macOS Window Shell */
+.mac-window {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  background: var(--mac-bg-window);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid var(--mac-border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--mac-shadow-window);
+  position: relative;
+}
+
+/* Titlebar */
+.mac-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 42px;
+  padding: 0 14px;
+  background: var(--mac-bg-titlebar);
+  border-bottom: 1px solid var(--mac-border);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.mac-titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  -webkit-app-region: no-drag;
+}
+
+.mac-traffic-lights {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.traffic-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.traffic-light:hover {
+  filter: brightness(0.9);
+  transform: scale(1.05);
+}
+
+.traffic-light.close {
+  background: var(--mac-traffic-close);
+  border: 1px solid var(--mac-traffic-close-border);
+}
+
+.traffic-light.minimize {
+  background: var(--mac-traffic-minimize);
+  border: 1px solid var(--mac-traffic-minimize-border);
+}
+
+.traffic-light.maximize {
+  background: var(--mac-traffic-maximize);
+  border: 1px solid var(--mac-traffic-maximize-border);
+}
+
+.mac-titlebar-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--mac-text-primary);
+  -webkit-app-region: drag;
+}
+
+.mac-title-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--mac-bg-chip);
+  color: var(--mac-text-secondary);
+  border: 1px solid var(--mac-border-subtle);
+  font-weight: 400;
+}
+
+.mac-titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+/* macOS Segmented Buttons & Controls */
+.mac-segmented-control {
+  display: inline-flex;
+  background: var(--mac-bg-chip);
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid var(--mac-border-subtle);
+  gap: 2px;
+}
+
+.mac-segment-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--mac-text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mac-segment-btn:hover {
+  color: var(--mac-text-primary);
+  background: var(--mac-bg-chip-hover);
+}
+
+.mac-segment-btn.active {
+  background: var(--mac-bg-card);
+  color: var(--mac-text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.mac-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--mac-border-subtle);
+  background: var(--mac-bg-chip);
+  color: var(--mac-text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.15s ease;
+}
+
+.mac-icon-btn:hover {
+  background: var(--mac-bg-chip-hover);
+  border-color: var(--mac-border);
+}
+
+.mac-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--mac-accent);
+  color: var(--mac-text-on-accent);
+  border: none;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.mac-primary-btn:hover {
+  background: var(--mac-accent-hover);
+}
+
+.mac-primary-btn:active {
+  transform: scale(0.98);
+}
+
+.mac-select {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--mac-bg-card);
+  border: 1px solid var(--mac-border);
+  color: var(--mac-text-primary);
+  outline: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.mac-select:focus {
+  border-color: var(--mac-border-focus);
+}
+
+/* Main Workspace Split Layout */
+.mac-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.mac-main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+  background: var(--mac-bg-sidebar);
+}
+
+/* Terminal Viewport Container */
+.terminal-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--mac-bg-terminal);
+  border-radius: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-tab-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  background: var(--mac-bg-terminal-header);
+  border-bottom: 1px solid var(--mac-border-subtle);
+  padding: 0 8px;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.terminal-tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--mac-text-secondary);
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.terminal-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--mac-text-primary);
+}
+
+.terminal-tab.active {
+  background: var(--mac-bg-terminal);
+  color: var(--mac-text-primary);
+  border-color: var(--mac-border-subtle);
+  font-weight: 500;
+}
+
+.terminal-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  opacity: 0.6;
+  margin-left: 2px;
+}
+
+.terminal-tab-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+  opacity: 1;
+}
+
+.terminal-tab-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.terminal-tab-indicator.running {
+  background: var(--mac-color-healthy);
+  box-shadow: 0 0 6px var(--mac-color-healthy);
+}
+
+.terminal-tab-indicator.idle {
+  background: var(--mac-text-muted);
+}
+
+.terminal-tab-indicator.blocked {
+  background: var(--mac-color-warning);
+}
+
+.terminal-panes-wrapper {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.terminal-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+  border-right: 1px solid var(--mac-border-subtle);
+}
+
+.terminal-pane:last-child {
+  border-right: none;
+}
+
+.terminal-output {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  font-family: var(--mac-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: #d1d5db;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.terminal-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--mac-bg-terminal-header);
+  border-top: 1px solid var(--mac-border-subtle);
+  flex-shrink: 0;
+}
+
+.terminal-prompt {
+  font-family: var(--mac-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mac-accent);
+}
+
+.terminal-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--mac-font-mono);
+  font-size: 12px;
+  color: var(--mac-text-primary);
+}
+
+.terminal-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid var(--mac-border-subtle);
+  overflow-x: auto;
+  font-size: 11px;
+}
+
+.quick-chip {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--mac-bg-chip);
+  color: var(--mac-text-secondary);
+  border: 1px solid var(--mac-border-subtle);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  font-family: var(--mac-font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.quick-chip:hover {
+  background: var(--mac-accent);
+  color: #fff;
+  border-color: var(--mac-accent);
+}
+
+/* Lateral Drawer / Inspector Panel */
+.mac-drawer {
+  width: 440px;
+  max-width: 50vw;
+  background: var(--mac-bg-drawer);
+  border-left: 1px solid var(--mac-border);
+  backdrop-filter: blur(24px) saturate(180%);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-shadow: var(--mac-shadow-drawer);
+  position: relative;
+  z-index: 10;
+  transition: width 0.28s cubic-bezier(0.16, 1, 0.3, 1), transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mac-drawer.collapsed {
+  width: 0;
+  transform: translateX(100%);
+  border-left: none;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mac-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 42px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--mac-border);
+  flex-shrink: 0;
+}
+
+.mac-drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--mac-text-primary);
+}
+
+.mac-drawer-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Plan & Artifacts Styles */
+.plan-segment-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--mac-border-subtle);
+  padding-bottom: 8px;
+  overflow-x: auto;
+}
+
+.plan-segment-tab {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mac-text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.plan-segment-tab:hover {
+  background: var(--mac-bg-chip);
+  color: var(--mac-text-primary);
+}
+
+.plan-segment-tab.active {
+  background: var(--mac-accent-subtle);
+  color: var(--mac-accent);
+  font-weight: 600;
+}
+
+.artifact-card {
+  background: var(--mac-bg-card);
+  border: 1px solid var(--mac-border);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--mac-shadow-card);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.artifact-card:hover {
+  border-color: var(--mac-border-focus);
+}
+
+.artifact-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.artifact-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--mac-text-primary);
+  line-height: 1.3;
+}
+
+.artifact-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--mac-text-muted);
+}
+
+.badge-segment {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--mac-accent-subtle);
+  color: var(--mac-accent);
+}
+
+.mermaid-container {
+  background: var(--mac-bg-terminal);
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.mermaid-visual-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.diagram-node {
+  padding: 6px 12px;
+  background: var(--mac-bg-card);
+  border: 1px solid var(--mac-border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mac-text-primary);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.diagram-arrow {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  color: var(--mac-text-muted);
+  font-size: 11px;
+}
+
+/* Crew Monitor Panel Styles */
+.crew-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.subagent-card {
+  background: var(--mac-bg-card);
+  border: 1px solid var(--mac-border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.subagent-card.working {
+  border-color: var(--mac-accent);
+  box-shadow: 0 0 12px var(--mac-accent-subtle);
+}
+
+.subagent-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.subagent-signature {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--mac-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.subagent-tier-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.tier-deep {
+  background: var(--mac-color-purple-subtle);
+  color: var(--mac-color-purple);
+}
+
+.tier-balanced {
+  background: var(--mac-color-cyan-subtle);
+  color: var(--mac-color-cyan);
+}
+
+.tier-fast {
+  background: var(--mac-color-healthy-subtle);
+  color: var(--mac-color-healthy);
+}
+
+.subagent-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--mac-text-secondary);
+}
+
+.subagent-worktree {
+  font-family: var(--mac-font-mono);
+  background: var(--mac-bg-chip);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+/* Memo Monitor Panel Styles */
+.vault-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.vault-stat-box {
+  background: var(--mac-bg-card);
+  border: 1px solid var(--mac-border);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.vault-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--mac-text-primary);
+}
+
+.vault-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--mac-text-muted);
+  margin-top: 2px;
+}
+
+.memo-events-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memo-event-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--mac-bg-card);
+  border: 1px solid var(--mac-border-subtle);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.memo-action-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.memo-action-context {
+  background: var(--mac-color-cyan-subtle);
+  color: var(--mac-color-cyan);
+}
+
+.memo-action-recall {
+  background: var(--mac-color-purple-subtle);
+  color: var(--mac-color-purple);
+}
+
+.memo-action-remember {
+  background: var(--mac-color-healthy-subtle);
+  color: var(--mac-color-healthy);
+}
+
+.memo-action-analyze {
+  background: var(--mac-color-warning-subtle);
+  color: var(--mac-color-warning);
+}
+
+/* Context Quota Bottom Bar */
+.mac-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 14px;
+  background: var(--mac-bg-titlebar);
+  border-top: 1px solid var(--mac-border);
+  font-size: 11px;
+  color: var(--mac-text-secondary);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.bottom-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.healthy {
+  background: var(--mac-color-healthy);
+  box-shadow: 0 0 6px var(--mac-color-healthy);
+}
+
+.status-dot.warning {
+  background: var(--mac-color-warning);
+  box-shadow: 0 0 6px var(--mac-color-warning);
+}
+
+.status-dot.critical {
+  background: var(--mac-color-critical);
+  box-shadow: 0 0 6px var(--mac-color-critical);
+  animation: pulse-critical 1.2s infinite;
+}
+
+@keyframes pulse-critical {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.6; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.bottom-bar-center {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-track {
+  width: 140px;
+  height: 6px;
+  background: var(--mac-bg-chip);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.35s ease, background-color 0.35s ease;
+}
+
+.progress-fill.healthy {
+  background: var(--mac-color-healthy);
+}
+
+.progress-fill.warning {
+  background: var(--mac-color-warning);
+}
+
+.progress-fill.critical {
+  background: var(--mac-color-critical);
+}
+
+.bottom-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.compact-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--mac-accent-subtle);
+  color: var(--mac-accent);
+  border: 1px solid var(--mac-accent);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.compact-btn:hover {
+  background: var(--mac-accent);
+  color: #fff;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.25);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.45);
+}
