@@ -121,8 +121,13 @@ async function main(): Promise<void> {
         port = parseInt(args[portIdx + 1]!, 10) || 4321
       }
       const noOpen = args.includes('--no-open')
-      console.log(`\n🚀 Iniciando deckseb Mission Control UI en http://127.0.0.1:${port}`)
-      const instance = await startUiServer({ port, openBrowser: !noOpen })
+      const useBrowser = args.includes('--browser')
+      console.log(`\n🚀 Iniciando deckseb Mission Control en http://127.0.0.1:${port} (${useBrowser ? 'Modo Navegador' : 'Ventana Nativa'})`)
+      const instance = await startUiServer({
+        port,
+        openWindow: !noOpen && !useBrowser,
+        openBrowser: !noOpen && useBrowser,
+      })
       console.log(`✨ Servidor activo en ${instance.url} (Presiona Ctrl+C para detener)\n`)
       break
     }

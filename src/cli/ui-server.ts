@@ -13,7 +13,64 @@ export interface UiServerOptions {
   port?: number
   host?: string
   openBrowser?: boolean
+  openWindow?: boolean
   vaultRoot?: string
+}
+
+export function launchStandaloneDesktopWindow(url: string, forceBrowser = false): void {
+  if (forceBrowser) {
+    const cmd =
+      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
+    execFile(cmd, [url], () => {})
+    return
+  }
+
+  const appArgs = [`--app=${url}`, '--window-size=1280,820', '--class=deckseb']
+
+  if (process.platform === 'linux') {
+    const candidates = ['chromium', 'google-chrome', 'google-chrome-stable', 'brave', 'microsoft-edge']
+    for (const bin of candidates) {
+      try {
+        const p = execFile(bin, appArgs, () => {})
+        if (p.pid) return
+      } catch {
+        // try next candidate
+      }
+    }
+    execFile('xdg-open', [url], () => {})
+    return
+  }
+
+  if (process.platform === 'darwin') {
+    const macCandidates = [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    ]
+    for (const bin of macCandidates) {
+      if (existsSync(bin)) {
+        execFile(bin, appArgs, () => {})
+        return
+      }
+    }
+    execFile('open', [url], () => {})
+    return
+  }
+
+  if (process.platform === 'win32') {
+    const winCandidates = ['msedge.exe', 'chrome.exe', 'brave.exe']
+    for (const bin of winCandidates) {
+      try {
+        const p = execFile(bin, appArgs, () => {})
+        if (p.pid) return
+      } catch {}
+    }
+    execFile('start', [url], () => {})
+    return
+  }
+
+  // Fallback
+  execFile('xdg-open', [url], () => {})
 }
 
 export interface UiServerInstance {
@@ -645,12 +702,9 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
   const port = typeof addr === 'object' && addr ? addr.port : (options.port ?? 4321)
   const actualUrl = `http://${host}:${port}`
 
-  if (options.openBrowser) {
-    const cmd =
-      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
-    execFile(cmd, [actualUrl], () => {
-      // Ignore background launcher errors
-    })
+  const shouldLaunch = options.openWindow ?? options.openBrowser ?? false
+  if (shouldLaunch) {
+    launchStandaloneDesktopWindow(actualUrl, Boolean(options.openBrowser && !options.openWindow))
   }
 
   return {
