@@ -29,6 +29,24 @@ describe('ui-server HTTP API & Sixzone Bento view', () => {
     assert.match(html, /id="leftSidebar"/)
     assert.match(html, /terminal-container/)
     assert.match(html, /mac-inspector/)
+
+    // Confirm all top bar buttons
+    assert.match(html, /id="simulatePlanBtn"/, 'top bar button simulatePlanBtn must exist')
+    assert.match(html, /id="topTabPlan"/, 'top bar button topTabPlan must exist')
+    assert.match(html, /id="topTabCrew"/, 'top bar button topTabCrew must exist')
+    assert.match(html, /id="topTabMemo"/, 'top bar button topTabMemo must exist')
+    assert.match(html, /id="topTabVault"/, 'top bar button topTabVault must exist')
+    assert.match(html, /id="themeToggleBtn"/, 'top bar button themeToggleBtn must exist')
+    assert.match(html, /id="toggleInspectorBtn"/, 'top bar button toggleInspectorBtn must exist')
+
+    // Confirm all inspector tabs
+    assert.match(html, /data-tab="plan"/, 'inspector tab plan must exist')
+    assert.match(html, /data-tab="crew"/, 'inspector tab crew must exist')
+    assert.match(html, /data-tab="memo"/, 'inspector tab memo must exist')
+    assert.match(html, /data-tab="vault"/, 'inspector tab vault must exist')
+
+    // Confirm ZERO occurrences of fake mock "Ejecutado:"
+    assert.ok(!html.includes('Ejecutado:'), 'HTML must have zero occurrences of fake mock "Ejecutado:"')
   })
 
   it('serves the macos.css stylesheet on GET /styles/macos.css', async () => {
@@ -72,7 +90,7 @@ describe('ui-server HTTP API & Sixzone Bento view', () => {
     assert.ok(Array.isArray(data.session.lines))
   })
 
-  it('executes real command echo SIXZONE_REAL_EXEC_OK on POST /api/terminal/input', async () => {
+  it('executes real command echo "hello-sixzone" on POST /api/terminal/input', async () => {
     // 1. Create a dedicated session
     const createRes = await fetch(`${baseUrl}/api/terminal/create`, {
       method: 'POST',
@@ -88,15 +106,17 @@ describe('ui-server HTTP API & Sixzone Bento view', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId,
-        command: 'echo "SIXZONE_REAL_EXEC_OK"',
+        command: 'echo "hello-sixzone"',
       }),
     })
     assert.equal(res.status, 200)
     const data = await res.json()
     assert.equal(data.success, true)
-    assert.match(data.stdout, /SIXZONE_REAL_EXEC_OK/)
-    const hasLine = data.lines.some((l: string) => l.includes('SIXZONE_REAL_EXEC_OK'))
-    assert.ok(hasLine, 'session output lines should contain SIXZONE_REAL_EXEC_OK')
+    assert.match(data.stdout, /hello-sixzone/)
+    const hasLine = data.lines.some((l: string) => l.includes('hello-sixzone'))
+    assert.ok(hasLine, 'session output lines should contain hello-sixzone')
+    assert.ok(!data.stdout.includes('Ejecutado:'), 'stdout must not contain fake mock "Ejecutado:"')
+    assert.ok(!data.lines.some((l: string) => l.includes('Ejecutado:')), 'lines must not contain fake mock "Ejecutado:"')
   })
 
   it('handles /plan command and returns detectedArtifact on POST /api/terminal/input', async () => {
