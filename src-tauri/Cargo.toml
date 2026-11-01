@@ -1,0 +1,17 @@
+[package]
+name = "deckseb-backend"
+version = "0.1.0"
+description = "Native desktop backend for deckseb"
+authors = ["PahesebPJ"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "deckseb_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "deckseb-backend"
+path = "src/main.rs"
+
+[dependencies]
