@@ -27,7 +27,9 @@ describe('segmented-vault', () => {
       }
 
       const saved = await vault.saveArtifact(sampleArtifact)
-      assert.ok(saved.filePath.includes('project-omega/plans/project-omega-launch-plan.md'))
+      assert.ok(
+        saved.filePath.replace(/\\/g, '/').includes('project-omega/plans/project-omega-launch-plan.md')
+      )
 
       // Verify file written to disk
       const content = await fs.readFile(saved.filePath, 'utf8')
