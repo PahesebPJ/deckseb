@@ -8,12 +8,14 @@ import {
   registerDecksebNode,
   unregisterDecksebNode,
 } from './setup.ts'
+import { startUiServer } from './ui-server.ts'
 
 function printHelp(): void {
   console.log(`
 ${BUNDLE_ID} v${VERSION} - Desktop mission control & PTY terminal hub for *seb ecosystem
 
 Usage:
+  deckseb ui [--port 4321] Launch the macOS Sequoia web mission control interface
   deckseb setup            Register deckseb as a leaf node (ui.deck) in hubseb topology
   deckseb purge            Remove deckseb from hubseb topology
   deckseb status [--json]  Inspect *seb ecosystem health, topology, and active subagents
@@ -112,6 +114,18 @@ async function main(): Promise<void> {
   }
 
   switch (command) {
+    case 'ui': {
+      let port = 4321
+      const portIdx = args.indexOf('--port')
+      if (portIdx !== -1 && args[portIdx + 1]) {
+        port = parseInt(args[portIdx + 1]!, 10) || 4321
+      }
+      const noOpen = args.includes('--no-open')
+      console.log(`\n🚀 Iniciando deckseb Mission Control UI en http://127.0.0.1:${port}`)
+      const instance = await startUiServer({ port, openBrowser: !noOpen })
+      console.log(`✨ Servidor activo en ${instance.url} (Presiona Ctrl+C para detener)\n`)
+      break
+    }
     case 'setup': {
       const outcome = await registerDecksebNode()
       console.log(`✅ Registered ${BUNDLE_ID} in ${outcome.topologyFile}`)
