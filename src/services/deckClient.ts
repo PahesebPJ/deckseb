@@ -4,22 +4,22 @@
  */
 
 import {
-  AgentHostId,
-  ArtifactSegment,
-  CrewRole,
-  CrewSubagentActivity,
-  DeckCommandName,
-  DeckEventName,
-  DetectedArtifact,
-  MemoActivityEvent,
-  MemosebCategory,
-  SebEcosystemSnapshot,
-  SessionContextQuota,
+  type AgentHostId,
+  type ArtifactSegment,
+  type CrewRole,
+  type CrewSubagentActivity,
+  type DeckCommandName,
+  type DeckEventName,
+  type DetectedArtifact,
+  type MemoActivityEvent,
+  type MemosebCategory,
+  type SebEcosystemSnapshot,
+  type SessionContextQuota,
   SUPPORTED_AGENT_HOSTS,
-  TauriDeckCommands,
-  TauriDeckEvents,
-  TerminalSession,
-  ThemeMode,
+  type TauriDeckCommands,
+  type TauriDeckEvents,
+  type TerminalSession,
+  type ThemeMode,
 } from '../types/deck.ts'
 
 type EventCallback<T = any> = (payload: T) => void
