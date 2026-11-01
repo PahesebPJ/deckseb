@@ -20,7 +20,7 @@ import {
   TauriDeckEvents,
   TerminalSession,
   ThemeMode,
-} from '../types/deck'
+} from '../types/deck.ts'
 
 type EventCallback<T = any> = (payload: T) => void
 

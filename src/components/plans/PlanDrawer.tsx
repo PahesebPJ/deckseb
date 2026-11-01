@@ -40,19 +40,21 @@ function renderMermaidVisual(mermaidCode: string): React.ReactNode {
   const linkRegex = /([a-zA-Z0-9_\-]+)(?:\["([^"]+)"\])?\s*(-->|---|-.->)\s*(?:\|([^|]+)\|)?\s*([a-zA-Z0-9_\-]+)(?:\["([^"]+)"\])?/g
 
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]
+    const line = lines[i] ?? ''
     let m: RegExpExecArray | null
     linkRegex.lastIndex = 0
     while ((m = linkRegex.exec(line)) !== null) {
-      const fromId = m[1]
-      const fromLabel = m[2] || m[1]
-      const toId = m[5]
-      const toLabel = m[6] || m[5]
+      const fromId = m[1] ?? ''
+      const fromLabel = m[2] || fromId
+      const toId = m[5] ?? ''
+      const toLabel = m[6] || toId
       const edgeLabel = m[4]
 
-      nodesMap.set(fromId, fromLabel)
-      nodesMap.set(toId, toLabel)
-      edges.push({ from: fromId, to: toId, label: edgeLabel })
+      if (fromId && toId) {
+        nodesMap.set(fromId, fromLabel)
+        nodesMap.set(toId, toLabel)
+        edges.push({ from: fromId, to: toId, label: edgeLabel })
+      }
     }
   }
 
@@ -117,7 +119,7 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({
   const refreshArtifacts = () => {
     deckClient.listArtifacts().then((list) => {
       setArtifacts(list)
-      if (list.length > 0 && !selectedArtifactId) {
+      if (list[0] && !selectedArtifactId) {
         setSelectedArtifactId(list[0].id)
       }
     })

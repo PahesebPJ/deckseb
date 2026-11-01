@@ -34,7 +34,7 @@ function renderAnsiText(text: string): React.ReactNode[] {
       )
     }
 
-    const codes = match[1].split(';').map((c) => parseInt(c, 10))
+    const codes = (match[1] ?? '').split(';').map((c) => parseInt(c, 10))
     for (const code of codes) {
       if (code === 0) {
         currentClasses = []
@@ -101,7 +101,7 @@ export const TerminalViewport: React.FC<TerminalViewportProps> = ({
   useEffect(() => {
     deckClient.listTerminals().then((list) => {
       setSessions(list)
-      const initialId = propActiveSessionId || (list.length > 0 ? list[0].id : '')
+      const initialId = propActiveSessionId || (list[0] ? list[0].id : '')
       setActiveId(initialId)
       if (onSessionChange && initialId) {
         onSessionChange(initialId)
@@ -175,7 +175,7 @@ export const TerminalViewport: React.FC<TerminalViewportProps> = ({
     const updated = await deckClient.listTerminals()
     setSessions(updated)
     if (activeId === sessionId) {
-      const nextId = updated.length > 0 ? updated[0].id : ''
+      const nextId = updated[0] ? updated[0].id : ''
       setActiveId(nextId)
       if (onSessionChange) {
         onSessionChange(nextId)
