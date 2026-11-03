@@ -1,34 +1,80 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
-import { SebEcosystemObserver } from '../core/ecosystem-observer.ts'
+import path from 'node:path'
 import { detectPlanInStream } from '../core/plan-detector.ts'
 import { BUNDLE_ID, VERSION } from '../version.ts'
 import {
+  getDefaultTopologyPath,
   isDecksebRegistered,
   registerDecksebNode,
   unregisterDecksebNode,
 } from './setup.ts'
-import { startUiServer } from './ui-server.ts'
+import {
+  launchStandaloneDesktopWindow,
+  startUiServer,
+} from './ui-server.ts'
 
 function printHelp(): void {
   console.log(`
-${BUNDLE_ID} v${VERSION} - Desktop mission control & PTY terminal hub for *seb ecosystem
+🪐 ${BUNDLE_ID} v${VERSION} — Visor Editorial Minimalista e Instantáneo de Planes
 
-Usage:
-  deckseb ui [--port 4321] Launch the macOS Sequoia web mission control interface
-  deckseb setup            Register deckseb as a leaf node (ui.deck) in hubseb topology
-  deckseb purge            Remove deckseb from hubseb topology
-  deckseb status [--json]  Inspect *seb ecosystem health, topology, and active subagents
-  deckseb detect <file>    Detect implementation plans or Mermaid diagrams in a markdown file
-  deckseb --version, -v    Display deckseb version
-  deckseb --help, -h       Display this help message
+Uso:
+  deckseb [watch|ui] [--port 4321] [--open] [--browser]
+      Inicia el visor en segundo plano, abre la ventana en cuanto un modelo cree
+      un plan (*plan*.md) y actualiza la vista en tiempo real vía SSE.
+
+  deckseb <archivo.md> | deckseb show <archivo.md> [--port 4321]
+      Abre de inmediato el plan en la ventana editorial (reutiliza servidor si está activo).
+
+  deckseb detect <archivo.md> [--json]
+      Analiza un archivo e inspecciona bloques Mermaid y clasificación del segmento.
+
+  deckseb status [--json]
+      Muestra el estado del visor, puerto activo y registro en la topología de hubseb.
+
+  deckseb setup
+      Registra deckseb en hubseb topology.json como nodo de visualización (ui.deck).
+
+  deckseb purge
+      Elimina deckseb de la topología de hubseb.
+
+  deckseb --version, -v
+      Muestra la versión de deckseb.
+
+  deckseb --help, -h
+      Muestra esta ayuda.
 `)
 }
 
-async function handleStatus(jsonMode: boolean): Promise<void> {
-  const observer = new SebEcosystemObserver()
-  const snapshot = observer.getSnapshot()
+function extractPort(args: string[], defaultPort = 4321): number {
+  const portIdx = args.indexOf('--port')
+  if (portIdx !== -1 && args[portIdx + 1]) {
+    const val = parseInt(args[portIdx + 1]!, 10)
+    if (!Number.isNaN(val) && val > 0) return val
+  }
+  return defaultPort
+}
+
+async function handleStatus(jsonMode: boolean, port: number): Promise<void> {
   const registered = await isDecksebRegistered()
+  let serverActive = false
+  let activePlansCount = 0
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/plans`, {
+      signal: AbortSignal.timeout(500),
+    })
+    if (res.ok) {
+      serverActive = true
+      const data = await res.json()
+      if (Array.isArray(data.plans)) {
+        activePlansCount = data.plans.length
+      }
+    }
+  } catch {
+    serverActive = false
+  }
 
   if (jsonMode) {
     console.log(
@@ -37,7 +83,12 @@ async function handleStatus(jsonMode: boolean): Promise<void> {
           version: VERSION,
           bundleId: BUNDLE_ID,
           registeredInTopology: registered,
-          snapshot,
+          topologyPath: getDefaultTopologyPath(),
+          uiServer: {
+            port,
+            status: serverActive ? 'running' : 'stopped',
+            plansLoaded: activePlansCount,
+          },
         },
         null,
         2
@@ -46,37 +97,28 @@ async function handleStatus(jsonMode: boolean): Promise<void> {
     return
   }
 
-  console.log(`\n🪐 deckseb v${VERSION} Ecosystem Status:`)
-  console.log(`  • Registered in hubseb: ${registered ? '✅ YES' : '❌ NO'}`)
-  console.log(
-    `  • hubseb detected:      ${snapshot.hubsebDetected ? '✅ YES' : '⚠️ NO'}`
-  )
-  console.log(
-    `  • crewseb detected:     ${snapshot.crewsebDetected ? '✅ YES' : '⚠️ NO'}`
-  )
-  console.log(
-    `  • memoseb detected:     ${snapshot.memosebDetected ? '✅ YES' : '⚠️ NO'}`
-  )
-  console.log(
-    `  • herdr detected:       ${snapshot.herdrDetected ? '✅ YES' : '⚠️ NO'}`
-  )
-  console.log(`  • Concurrency preset:   ${snapshot.preset} (${snapshot.concurrencyMode}, maxLocal=${snapshot.maxLocalParallel})`)
-  console.log(`  • Available hosts:      ${snapshot.availableHosts.join(', ')}`)
-  console.log(
-    `  • Memoseb Vault stats:  ${snapshot.vaultStats.memoryCount} memories across ${snapshot.vaultStats.projectCount} projects (~${snapshot.vaultStats.totalTokens} tokens)\n`
-  )
+  console.log(`\n🪐 deckseb v${VERSION} — Estado del Visor:`)
+  console.log(`  • Registrado en hubseb:     ${registered ? '✅ SÍ' : '❌ NO'}`)
+  console.log(`  • Servidor Visor (:4321):    ${serverActive ? `🟢 ACTIVO (${activePlansCount} planes en memoria)` : '⚪ INACTIVO'}`)
+  console.log(`  • Topología:                ${getDefaultTopologyPath()}\n`)
 }
 
 async function handleDetect(filePath: string, jsonMode: boolean): Promise<void> {
   try {
-    const content = await fs.readFile(filePath, 'utf8')
-    const detected = detectPlanInStream('cli-session', 'active-project', content, filePath)
+    const fullPath = path.resolve(filePath)
+    if (!existsSync(fullPath)) {
+      console.error(`Error: el archivo no existe: ${filePath}`)
+      process.exit(1)
+    }
+
+    const content = await fs.readFile(fullPath, 'utf8')
+    const detected = detectPlanInStream('cli-session', 'active-project', content, fullPath)
 
     if (!detected) {
       if (jsonMode) {
         console.log(JSON.stringify({ detected: null }))
       } else {
-        console.log(`No implementation plan or Mermaid diagram detected in: ${filePath}`)
+        console.log(`No se detectó un plan de implementación o bloque Mermaid en: ${filePath}`)
       }
       return
     }
@@ -86,80 +128,134 @@ async function handleDetect(filePath: string, jsonMode: boolean): Promise<void> 
       return
     }
 
-    console.log(`\n📋 Artifact Detected!`)
-    console.log(`  • Title:   ${detected.title}`)
-    console.log(`  • Segment: ${detected.segment}`)
-    console.log(`  • Path:    ${detected.filePath}`)
-    console.log(`  • Diagrams: ${detected.mermaidBlocks.length} Mermaid block(s) found\n`)
+    console.log(`\n📋 Artefacto Detectado:`)
+    console.log(`  • Título:    ${detected.title}`)
+    console.log(`  • Segmento:  ${detected.segment}`)
+    console.log(`  • Archivo:   ${detected.filePath}`)
+    console.log(`  • Diagramas: ${detected.mermaidBlocks.length} bloque(s) Mermaid`)
+    console.log(`  • Memoseb:   categoría sugerida "${detected.memosebCategory || 'architecture'}"\n`)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error(`Error reading ${filePath}: ${msg}`)
+    console.error(`Error al analizar ${filePath}: ${msg}`)
     process.exit(1)
   }
 }
 
+async function handleOpenFile(filePath: string, args: string[]): Promise<void> {
+  const fullPath = path.resolve(filePath)
+  if (!existsSync(fullPath)) {
+    console.error(`Error: el archivo no existe: ${filePath}`)
+    process.exit(1)
+  }
+
+  const port = extractPort(args, 4321)
+  const useBrowser = args.includes('--browser')
+
+  // 1. Try sending to an already-running server
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/plans`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath: fullPath }),
+      signal: AbortSignal.timeout(600),
+    })
+    if (res.ok) {
+      console.log(`✨ Plan enviado al visor activo en http://127.0.0.1:${port}`)
+      launchStandaloneDesktopWindow(`http://127.0.0.1:${port}`, useBrowser)
+      return
+    }
+  } catch {
+    // Server is not running; start a new one below
+  }
+
+  // 2. Start a new server instance with the plan loaded
+  console.log(`\n🚀 Abriendo ${path.basename(fullPath)} en http://127.0.0.1:${port}`)
+  const instance = await startUiServer({
+    port,
+    initialPlanFile: fullPath,
+    openWindow: !useBrowser,
+    openBrowser: useBrowser,
+    autoOpenOnPlan: true,
+  })
+  console.log(`✨ Visor activo en ${instance.url} (Presiona Ctrl+C para salir)\n`)
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
-  const command = args[0]
+  const firstArg = args[0]
   const jsonMode = args.includes('--json')
+  const port = extractPort(args, 4321)
 
-  if (!command || command === '--help' || command === '-h' || command === 'help') {
+  if (firstArg === '--help' || firstArg === '-h' || firstArg === 'help') {
     printHelp()
     return
   }
 
-  if (command === '--version' || command === '-v' || command === 'version') {
+  if (firstArg === '--version' || firstArg === '-v' || firstArg === 'version') {
     console.log(`${BUNDLE_ID} v${VERSION}`)
     return
   }
 
-  switch (command) {
-    case 'ui': {
-      let port = 4321
-      const portIdx = args.indexOf('--port')
-      if (portIdx !== -1 && args[portIdx + 1]) {
-        port = parseInt(args[portIdx + 1]!, 10) || 4321
+  if (!firstArg || firstArg === 'watch' || firstArg === 'ui') {
+    const openWindow = args.includes('--open')
+    const useBrowser = args.includes('--browser')
+    console.log(`\n🚀 Iniciando deckseb Visor de Planes en http://127.0.0.1:${port}`)
+    const instance = await startUiServer({
+      port,
+      autoOpenOnPlan: true,
+      openWindow,
+      openBrowser: useBrowser,
+    })
+    console.log(`✨ Vigilando planes en tiempo real en ${instance.url} (Presiona Ctrl+C para salir)\n`)
+    return
+  }
+
+  if (firstArg === 'show') {
+    const target = args[1]
+    if (!target) {
+      console.error('Error: especifica el archivo a mostrar: deckseb show <archivo.md>')
+      process.exit(1)
+    }
+    await handleOpenFile(target, args)
+    return
+  }
+
+  // If the first argument is an existing markdown file or ends with .md
+  if (firstArg.endsWith('.md') || existsSync(path.resolve(firstArg))) {
+    await handleOpenFile(firstArg, args)
+    return
+  }
+
+  switch (firstArg) {
+    case 'detect': {
+      const target = args[1]
+      if (!target) {
+        console.error('Error: especifica el archivo a analizar: deckseb detect <archivo.md>')
+        process.exit(1)
       }
-      const noOpen = args.includes('--no-open')
-      const useBrowser = args.includes('--browser')
-      console.log(`\n🚀 Iniciando deckseb Mission Control en http://127.0.0.1:${port} (${useBrowser ? 'Modo Navegador' : 'Ventana Nativa'})`)
-      const instance = await startUiServer({
-        port,
-        openWindow: !noOpen && !useBrowser,
-        openBrowser: !noOpen && useBrowser,
-      })
-      console.log(`✨ Servidor activo en ${instance.url} (Presiona Ctrl+C para detener)\n`)
+      await handleDetect(target, jsonMode)
+      break
+    }
+    case 'status': {
+      await handleStatus(jsonMode, port)
       break
     }
     case 'setup': {
       const outcome = await registerDecksebNode()
-      console.log(`✅ Registered ${BUNDLE_ID} in ${outcome.topologyFile}`)
+      console.log(`✅ ${BUNDLE_ID} registrado en ${outcome.topologyFile}`)
       break
     }
     case 'purge': {
       const outcome = await unregisterDecksebNode()
       if (outcome.removed) {
-        console.log(`🧹 Removed ${BUNDLE_ID} from ${outcome.topologyFile}`)
+        console.log(`🧹 ${BUNDLE_ID} eliminado de ${outcome.topologyFile}`)
       } else {
-        console.log(`ℹ️ ${BUNDLE_ID} was not registered in ${outcome.topologyFile}`)
+        console.log(`ℹ️ ${BUNDLE_ID} no estaba registrado en ${outcome.topologyFile}`)
       }
-      break
-    }
-    case 'status': {
-      await handleStatus(jsonMode)
-      break
-    }
-    case 'detect': {
-      const targetFile = args[1]
-      if (!targetFile) {
-        console.error('Error: specify file path to detect: deckseb detect <path>')
-        process.exit(1)
-      }
-      await handleDetect(targetFile, jsonMode)
       break
     }
     default: {
-      console.error(`Unknown command: ${command}`)
+      console.error(`Comando desconocido: ${firstArg}`)
       printHelp()
       process.exit(1)
     }

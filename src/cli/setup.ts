@@ -42,8 +42,7 @@ export function buildDeckNodeRegistration(): TopologyNode {
   return {
     id: BUNDLE_ID,
     version: VERSION,
-    summary:
-      'Desktop mission control, PTY terminal hub, and passive telemetry viewer for *seb ecosystem',
+    summary: 'Minimalist instant plan viewer for *seb ecosystem',
     command: [path.resolve(process.execPath), path.resolve(scriptPath)],
     provides: [...PROVIDES],
     consumes: [...CONSUMES],

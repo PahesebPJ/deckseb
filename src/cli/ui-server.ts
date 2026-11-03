@@ -1,13 +1,17 @@
-import { execFile, execSync, spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { SebEcosystemObserver } from '../core/ecosystem-observer.ts'
-import { detectPlanInStream } from '../core/plan-detector.ts'
+import {
+  classifyArtifactSegment,
+  detectPlanInStream,
+  extractMermaidBlocks,
+  slugifyTitle,
+} from '../core/plan-detector.ts'
 import { SegmentedArtifactVault } from '../core/segmented-vault.ts'
-import { computeSessionContextQuota } from '../core/transcript-monitor.ts'
 import type { DetectedArtifact } from '../types/deck.ts'
 import { BUNDLE_ID, PACKAGE_ROOT, VERSION } from '../version.ts'
 
@@ -16,27 +20,60 @@ export interface UiServerOptions {
   host?: string
   openBrowser?: boolean
   openWindow?: boolean
+  autoOpenOnPlan?: boolean
+  initialPlanFile?: string
+  watchDirs?: string[]
   vaultRoot?: string
 }
 
-export function launchStandaloneDesktopWindow(url: string, forceBrowser = false): void {
+export interface UiServerInstance {
+  server: http.Server
+  port: number
+  url: string
+  close: () => Promise<void>
+  publishPlan: (
+    artifact: DetectedArtifact,
+    eventType?: 'plan:created' | 'plan:updated'
+  ) => Promise<void>
+  getPlans: () => DetectedArtifact[]
+  getActivePlan: () => DetectedArtifact | null
+}
+
+export function launchStandaloneDesktopWindow(
+  url: string,
+  forceBrowser = false
+): void {
   if (forceBrowser) {
     const cmd =
-      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
+      process.platform === 'darwin'
+        ? 'open'
+        : process.platform === 'win32'
+          ? 'start'
+          : 'xdg-open'
     execFile(cmd, [url], () => {})
     return
   }
 
-  const appArgs = [`--app=${url}`, '--window-size=1380,880', '--class=deckseb']
+  const appArgs = [
+    `--app=${url}`,
+    '--window-size=1080,860',
+    '--class=deckseb',
+  ]
 
   if (process.platform === 'linux') {
-    const candidates = ['chromium', 'google-chrome', 'google-chrome-stable', 'brave', 'microsoft-edge']
+    const candidates = [
+      'chromium',
+      'google-chrome',
+      'google-chrome-stable',
+      'brave',
+      'microsoft-edge',
+    ]
     for (const bin of candidates) {
       try {
         const p = execFile(bin, appArgs, () => {})
         if (p.pid) return
       } catch {
-        // try next
+        // try next candidate
       }
     }
     execFile('xdg-open', [url], () => {})
@@ -65,7 +102,9 @@ export function launchStandaloneDesktopWindow(url: string, forceBrowser = false)
       try {
         const p = execFile(bin, appArgs, () => {})
         if (p.pid) return
-      } catch {}
+      } catch {
+        // try next candidate
+      }
     }
     execFile('start', [url], () => {})
     return
@@ -74,1415 +113,1037 @@ export function launchStandaloneDesktopWindow(url: string, forceBrowser = false)
   execFile('xdg-open', [url], () => {})
 }
 
-export interface UiServerInstance {
-  server: http.Server
-  port: number
-  url: string
-  close: () => Promise<void>
-}
-
-export interface TerminalSessionInfo {
-  id: string
-  hostId: string
-  title: string
-  cwd: string
-  pid: number
-  status: 'running' | 'idle' | 'closed'
-  lines: string[]
-  createdAt: string
-  usedTokens: number
-  maxTokens: number
-}
-
-function getSanitizedEnv(): NodeJS.ProcessEnv {
-  const home = os.homedir()
-  const localBin = path.join(home, '.local', 'bin')
-  const usrLocalBin = '/usr/local/bin'
-  const currentPath = process.env.PATH || '/usr/bin:/bin'
-  const parts = currentPath.split(':')
-  if (!parts.includes(localBin)) parts.unshift(localBin)
-  if (!parts.includes(usrLocalBin)) parts.unshift(usrLocalBin)
-  return {
-    ...process.env,
-    PATH: parts.join(':'),
-    TERM: 'xterm-256color',
-    COLORTERM: 'truecolor',
-  }
-}
-
-function getSystemInfo(cwd: string): { osRelease: string; branch: string } {
-  let osRelease = `${os.type()} ${os.release()} (${os.arch()})`
-  try {
-    osRelease = execSync('uname -sr', { encoding: 'utf8', timeout: 1500 }).trim()
-  } catch {}
-
-  let branch = 'main'
-  try {
-    branch = execSync('git rev-parse --abbrev-ref HEAD 2>/dev/null', {
-      cwd,
-      encoding: 'utf8',
-      timeout: 1500,
-    }).trim()
-  } catch {}
-
-  return { osRelease, branch }
-}
-
-export class RealTerminalManager {
-  private sessions = new Map<string, TerminalSessionInfo>()
-  private processes = new Map<string, ChildProcess>()
-
-  async createSession(hostId: string, title?: string, cwd?: string): Promise<TerminalSessionInfo> {
-    const sessionCwd = cwd && existsSync(cwd) ? path.resolve(cwd) : process.cwd()
-    const id = `term-${hostId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
-    const sessionTitle = title || `${hostId} · ${path.basename(sessionCwd)}`
-    const env = getSanitizedEnv()
-
-    const shellBin = process.env.SHELL || '/bin/sh'
-    const proc = spawn(shellBin, ['-s'], {
-      cwd: sessionCwd,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-
-    const pid = proc.pid || process.pid
-    proc.unref()
-    this.processes.set(id, proc)
-
-    const { osRelease, branch } = getSystemInfo(sessionCwd)
-
-    const initialLines = [
-      `\x1b[1;36m[deckseb]\x1b[0m Sixzone Tactical Terminal initialized for \x1b[1m${hostId}\x1b[0m (PID: ${pid})`,
-      `\x1b[90mSystem:\x1b[0m ${osRelease} | \x1b[90mCWD:\x1b[0m ${sessionCwd}`,
-      `\x1b[32m✔ Git Branch:\x1b[0m ${branch} | \x1b[38;5;39mStatus:\x1b[0m RUNNING`,
-      `\x1b[90mTip: Run real shell commands (ls, git status, pwd), quick pills or /plan /compact\x1b[0m`,
-    ]
-
-    const session: TerminalSessionInfo = {
-      id,
-      hostId,
-      title: sessionTitle,
-      cwd: sessionCwd,
-      pid,
-      status: 'running',
-      lines: initialLines,
-      createdAt: new Date().toISOString(),
-      usedTokens: 14200,
-      maxTokens: 200000,
-    }
-
-    this.sessions.set(id, session)
-
-    proc.on('exit', () => {
-      const s = this.sessions.get(id)
-      if (s && s.status === 'running') {
-        s.status = 'idle'
-      }
-    })
-
-    return session
-  }
-
-  listSessions(): TerminalSessionInfo[] {
-    return Array.from(this.sessions.values()).map((s) => ({
-      id: s.id,
-      hostId: s.hostId,
-      title: s.title,
-      cwd: s.cwd,
-      pid: s.pid,
-      status: s.status,
-      lines: [...s.lines],
-      createdAt: s.createdAt,
-      usedTokens: s.usedTokens,
-      maxTokens: s.maxTokens,
-    }))
-  }
-
-  getSession(sessionId: string): TerminalSessionInfo | undefined {
-    return this.sessions.get(sessionId)
-  }
-
-  killSession(sessionId: string): boolean {
-    const session = this.sessions.get(sessionId)
-    if (!session) return false
-    const proc = this.processes.get(sessionId)
-    if (proc) {
-      try {
-        proc.stdin?.end()
-        proc.kill('SIGTERM')
-      } catch {}
-      this.processes.delete(sessionId)
-    }
-    session.status = 'closed'
-    this.sessions.delete(sessionId)
-    return true
-  }
-
-  killAll(): void {
-    for (const id of Array.from(this.sessions.keys())) {
-      this.killSession(id)
-    }
-  }
-
-  async executeCommand(
-    sessionId: string,
-    command: string,
-    vault: SegmentedArtifactVault
-  ): Promise<{
-    success: boolean
-    output?: string
-    stdout?: string
-    stderr?: string
-    code?: number
-    lines: string[]
-    cwd: string
-    detectedArtifact?: DetectedArtifact | null
-    tokenUsage?: { used: number; max: number; remainingPercent: number }
-  }> {
-    const session = this.sessions.get(sessionId)
-    if (!session) {
-      throw new Error(`Session not found: ${sessionId}`)
-    }
-
-    const trimmed = command.trim()
-    session.lines.push(`❯ ${command}`)
-    session.usedTokens = Math.min(
-      session.maxTokens,
-      session.usedTokens + Math.floor(command.length / 3) + 25
-    )
-
-    // Handle /plan or • Escanear Plan
-    if (trimmed === '/plan' || trimmed.startsWith('/plan ')) {
-      let planText = ''
-      let planFile = ''
-      const candidates = [
-        path.join(session.cwd, 'README.md'),
-        path.join(PACKAGE_ROOT, 'README.md'),
-        path.join(session.cwd, 'AGENT_INSTALL.md'),
-      ]
-      for (const cand of candidates) {
-        if (existsSync(cand)) {
-          try {
-            planText = await readFile(cand, 'utf8')
-            planFile = cand
-            break
-          } catch {}
-        }
-      }
-
-      if (!planText || !planText.includes('```mermaid')) {
-        planText = `# Plan de Mando: deckseb Sixzone Bento\n\nArquitectura interactiva de terminal táctica en modo Bento Grid.\n\n\`\`\`mermaid\nflowchart LR\n  CLI["Host CLI (${session.hostId})"] --> Engine["deckseb Core Engine"]\n  Engine --> BentoUI["Sixzone Bento UI"]\n  Engine --> Vault[".seb-vault/"]\n  Engine --> Memo["memoseb FTS5"]\n\`\`\`\n\n## Matriz de Despacho\n- Terminales PTY reales en /api/terminal\n- Sincronización en vivo con memoseb\n- Auto-renderizado de diagramas SVG`
-        planFile = path.join(session.cwd, 'plans', 'sixzone-plan.md')
-      }
-
-      const detected = detectPlanInStream(
-        session.id,
-        path.basename(session.cwd) || 'deckseb',
-        planText,
-        planFile
-      )
-
-      if (detected) {
-        await vault.saveArtifact(detected)
-      }
-
-      session.lines.push(
-        `\x1b[32m✔ Plan escaneado e indexado en .seb-vault! Desplegando en Inspector Táctico...\x1b[0m`
-      )
-
-      return {
-        success: true,
-        output: 'Plan detectado y guardado en .seb-vault',
-        stdout: 'Plan detectado',
-        lines: session.lines,
-        cwd: session.cwd,
-        detectedArtifact: detected,
-      }
-    }
-
-    // Handle /compact
-    if (trimmed === '/compact') {
-      session.usedTokens = Math.max(12000, Math.floor(session.usedTokens * 0.45))
-      const percent = Math.round((1 - session.usedTokens / session.maxTokens) * 100)
-      session.lines.push(
-        `\x1b[32m✔ Contexto compactado exitosamente. Capacidad restante: ${percent}%\x1b[0m`
-      )
-      return {
-        success: true,
-        output: 'Context compacted',
-        lines: session.lines,
-        cwd: session.cwd,
-        tokenUsage: {
-          used: session.usedTokens,
-          max: session.maxTokens,
-          remainingPercent: percent,
-        },
-      }
-    }
-
-    // Handle cd command
-    if (trimmed === 'cd' || trimmed.startsWith('cd ')) {
-      const target = trimmed === 'cd' ? os.homedir() : trimmed.slice(3).trim()
-      const resolved = target.startsWith('~')
-        ? path.join(os.homedir(), target.slice(1))
-        : path.resolve(session.cwd, target)
-
-      if (existsSync(resolved) && statSync(resolved).isDirectory()) {
-        session.cwd = resolved
-        session.lines.push(`\x1b[90m${resolved}\x1b[0m`)
-        return {
-          success: true,
-          stdout: resolved,
-          lines: session.lines,
-          cwd: session.cwd,
-        }
-      } else {
-        const errMsg = `cd: no such file or directory: ${target}`
-        session.lines.push(`\x1b[31m${errMsg}\x1b[0m`)
-        return {
-          success: false,
-          stderr: errMsg,
-          lines: session.lines,
-          cwd: session.cwd,
-        }
-      }
-    }
-
-    // Handle clear / Limpiar
-    if (trimmed === 'clear' || trimmed === 'Limpiar') {
-      session.lines = []
-      return {
-        success: true,
-        stdout: '',
-        lines: session.lines,
-        cwd: session.cwd,
-      }
-    }
-
-    // REAL SYSTEM EXECUTION
-    const env = getSanitizedEnv()
-    return new Promise((resolve) => {
-      const child = spawn('/bin/sh', ['-c', command], {
-        cwd: session.cwd,
-        env,
-      })
-
-      let stdout = ''
-      let stderr = ''
-
-      const timer = setTimeout(() => {
-        try {
-          child.kill('SIGTERM')
-        } catch {}
-      }, 15000)
-
-      child.stdout.on('data', (data) => {
-        stdout += data.toString()
-      })
-
-      child.stderr.on('data', (data) => {
-        stderr += data.toString()
-      })
-
-      child.on('close', (code) => {
-        clearTimeout(timer)
-        const combined = (stdout + (stderr ? (stdout ? '\n' : '') + stderr : '')).trimEnd()
-        if (combined) {
-          const split = combined.split(/\r?\n/)
-          for (const line of split) {
-            session.lines.push(line)
-          }
-        }
-        resolve({
-          success: code === 0,
-          stdout,
-          stderr,
-          code: code ?? 0,
-          lines: session.lines,
-          cwd: session.cwd,
-        })
-      })
-
-      child.on('error', (err) => {
-        clearTimeout(timer)
-        const errMsg = String(err.message || err)
-        session.lines.push(`\x1b[31mError: ${errMsg}\x1b[0m`)
-        resolve({
-          success: false,
-          stderr: errMsg,
-          code: 1,
-          lines: session.lines,
-          cwd: session.cwd,
-        })
-      })
-    })
-  }
-}
-
-function parseJsonBody<T = any>(req: http.IncomingMessage): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let body = ''
-    req.on('data', (chunk) => {
-      body += chunk
-      if (body.length > 2 * 1024 * 1024) {
-        reject(new Error('Payload too large'))
-      }
-    })
-    req.on('end', () => {
-      if (!body.trim()) {
-        resolve({} as T)
-        return
-      }
-      try {
-        resolve(JSON.parse(body))
-      } catch (err) {
-        reject(new Error(`Invalid JSON body: ${String(err)}`))
-      }
-    })
-    req.on('error', reject)
-  })
-}
-
-function sendJson(res: http.ServerResponse, statusCode: number, data: unknown): void {
-  const json = JSON.stringify(data)
-  res.writeHead(statusCode, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  })
-  res.end(json)
-}
-
-function sendHtml(res: http.ServerResponse, html: string): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'no-cache',
-  })
-  res.end(html)
-}
-
-function sendCss(res: http.ServerResponse, css: string): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/css; charset=utf-8',
-    'Cache-Control': 'public, max-age=3600',
-  })
-  res.end(css)
-}
-
 export function generateDeckUiHtml(): string {
   return `<!DOCTYPE html>
 <html lang="es" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>deckseb v${VERSION} — Mission Control</title>
+  <title>deckseb — Visor Editorial de Planes</title>
   <link rel="stylesheet" href="/styles/macos.css">
-  <style>
-    /* Inline fallbacks for zero flash */
-    body {
-      margin: 0;
-      padding: 0;
-      background: #05080b;
-      color: #ffffff;
-      overflow: hidden;
-      height: 100vh;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-    }
-  </style>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪐</text></svg>">
 </head>
 <body>
-  <div class="bento-shell">
-    <!-- Topbar: Bento Card with macOS traffic lights & fast action pills -->
-    <header class="bento-card bento-topbar mac-titlebar">
-      <span class="corner-cross tl">+</span>
-      <span class="corner-cross tr">+</span>
-
-      <div class="topbar-left mac-titlebar-left">
-        <div class="traffic-lights mac-traffic-lights">
+  <div class="plan-shell">
+    <header class="plan-topbar">
+      <div class="topbar-left">
+        <div class="traffic-lights">
           <span class="traffic-light close" title="Cerrar"></span>
           <span class="traffic-light minimize" title="Minimizar"></span>
           <span class="traffic-light maximize" title="Maximizar"></span>
         </div>
-        <button class="bento-pill pill-ghost pill-mini" id="toggleSidebarBtn" title="Ocultar / Mostrar Sidebar Izquierda">
-          ☰ Sidebar
-        </button>
-        <span class="brand-badge app-badge">deckseb v${VERSION} — Mission Control</span>
+        <span class="brand-badge">deckseb</span>
+        <span id="liveIndicator" class="live-indicator">
+          <span id="liveDot" class="live-dot"></span>
+          <span id="liveText">En vivo</span>
+        </span>
       </div>
 
-      <div class="topbar-center titlebar-center mac-titlebar-center">
-        <div class="host-status-chip">
-          <span class="status-indicator live status-dot-pulse" id="livePill" title="Sesión activa"></span>
-          <span class="window-title" id="activeHostLabel">shell · deckseb</span>
-          <span class="header-tags" id="activePidBadge">PID: ...</span>
+      <div class="topbar-right">
+        <div class="plan-select-wrapper">
+          <select id="planSelector" class="plan-select" aria-label="Seleccionar plan">
+            <option value="" disabled selected>Esperando planes…</option>
+          </select>
+          <span class="plan-select-caret">▼</span>
         </div>
-      </div>
-
-      <div class="topbar-actions titlebar-actions mac-titlebar-right">
-        <button class="bento-pill pill-cyan" id="simulatePlanBtn" title="Escanear y abrir plan en Inspector">
-          • Escanear Plan
-        </button>
-        <button class="bento-pill pill-ghost" id="topTabPlan" title="Abrir Plan & Mermaid">
-          • Plan & Mermaid
-        </button>
-        <button class="bento-pill pill-ghost" id="topTabCrew" title="Abrir CrewSeb">
-          • CrewSeb (10)
-        </button>
-        <button class="bento-pill pill-ghost" id="topTabMemo" title="Abrir MemoSeb">
-          • MemoSeb
-        </button>
-        <button class="bento-pill pill-ghost" id="topTabVault" title="Abrir Bóveda">
-          • .seb-vault
-        </button>
-        <button class="bento-pill pill-petrol" id="themeToggleBtn" title="Alternar Modo Claro / Oscuro">
-          <span id="themeIcon">☀️</span> <span id="themeLabel">Claro</span>
-        </button>
-        <button class="bento-pill pill-ghost pill-mini" id="toggleInspectorBtn" title="Abrir / Ocultar Inspector Derecho">
-          Inspector
+        <button id="themeToggleBtn" class="theme-toggle-btn" title="Alternar Modo Oscuro / Claro" aria-label="Alternar tema">
+          <span id="themeIcon">☀️</span>
         </button>
       </div>
     </header>
 
-    <!-- Main Workspace: 3 Columns Bento Grid -->
-    <main class="bento-workspace mac-workspace">
-      <!-- Column 1: Left Sidebar of Real Terminal Sessions (290px, collapsible) -->
-      <aside class="bento-card bento-sidebar" id="leftSidebar">
-        <span class="corner-cross tl">+</span>
-        <span class="corner-cross tr">+</span>
-        <span class="corner-cross bl">+</span>
-        <span class="corner-cross br">+</span>
+    <main class="plan-reader">
+      <div id="emptyState" class="plan-empty-state">
+        <div class="plan-empty-icon">🪐</div>
+        <h2 class="plan-empty-title">Esperando plan del modelo…</h2>
+        <p class="plan-empty-desc">En cuanto el agente cree un plan de implementación, aparecerá aquí automáticamente con diagramas interactivos y matriz de tareas.</p>
+      </div>
 
-        <div class="bento-header">
-          <span class="bento-header-title">
-            <span>💻</span> SESIONES DE TERMINAL
-          </span>
-          <span class="header-tags" id="sessionCountBadge">1 activa</span>
-        </div>
-
-        <div class="sidebar-host-grid">
-          <button class="bento-pill pill-petrol pill-mini host-btn" data-host="shell">• + Shell</button>
-          <button class="bento-pill pill-petrol pill-mini host-btn" data-host="antigravity">• + Antigravity</button>
-          <button class="bento-pill pill-petrol pill-mini host-btn" data-host="claude">• + Claude</button>
-          <button class="bento-pill pill-petrol pill-mini host-btn" data-host="codex">• + Codex</button>
-          <button class="bento-pill pill-petrol pill-mini host-btn" data-host="opencode">• + OpenCode</button>
-          <button class="bento-pill pill-petrol pill-mini host-btn" data-host="herdr">• + Herdr</button>
-        </div>
-
-        <div class="sessions-scroll-list" id="sessionsList">
-          <!-- Injected dynamically -->
-        </div>
-      </aside>
-
-      <!-- Column 2: Central Terminal (Real PTY/Shell Output & Execution) -->
-      <section class="bento-card bento-terminal-col terminal-container">
-        <span class="corner-cross tl">+</span>
-        <span class="corner-cross tr">+</span>
-        <span class="corner-cross bl">+</span>
-        <span class="corner-cross br">+</span>
-
-        <div class="terminal-header">
-          <div class="tabs-list" id="tabsContainer">
-            <!-- Tabs injected dynamically -->
+      <article id="planView" class="plan-view" style="display: none;">
+        <header class="plan-header">
+          <div class="plan-badges-row">
+            <span id="planSegment" class="segment-badge">plans</span>
           </div>
-          <div class="terminal-actions">
-            <select id="newTabSelect" class="mac-select">
-              <option value="" disabled selected>+ Nueva Sesión...</option>
-              <option value="shell">shell (Terminal local)</option>
-              <option value="antigravity">antigravity (Gemini CLI)</option>
-              <option value="claude">claude (Claude Code)</option>
-              <option value="codex">codex (OpenAI)</option>
-              <option value="opencode">opencode</option>
-              <option value="herdr">herdr</option>
-            </select>
+          <h1 id="planTitle" class="plan-title">Título del Plan</h1>
+          <div class="plan-meta-row">
+            <span class="plan-meta-item" title="Ruta del archivo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+              </svg>
+              <span id="planPath">~</span>
+            </span>
+            <span class="plan-meta-item" title="Hora de actualización">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              <span id="planTimestamp">~</span>
+            </span>
           </div>
-        </div>
+        </header>
 
-        <div class="terminal-body" id="termOutput">
-          <!-- Real terminal stream lines -->
-        </div>
-
-        <!-- Quick Pills Bar above input -->
-        <div class="terminal-quick-pills">
-          <span style="font-size: 11px; color: var(--bento-text-muted); margin-right: 4px;">Atajos:</span>
-          <button class="bento-pill pill-petrol pill-mini quick-cmd-btn" data-cmd="ls -la">• ls -la</button>
-          <button class="bento-pill pill-petrol pill-mini quick-cmd-btn" data-cmd="git status">• git status</button>
-          <button class="bento-pill pill-petrol pill-mini quick-cmd-btn" data-cmd="crewseb models list">• crewseb models list</button>
-          <button class="bento-pill pill-petrol pill-mini quick-cmd-btn" data-cmd="memoseb context">• memoseb context</button>
-          <button class="bento-pill pill-cyan pill-mini quick-cmd-btn" data-cmd="/plan">• /plan</button>
-          <button class="bento-pill pill-ghost pill-mini quick-cmd-btn" data-cmd="Limpiar">• Limpiar</button>
-        </div>
-
-        <div class="terminal-prompt-bar">
-          <span class="prompt-symbol">❯</span>
-          <input type="text" id="termInput" class="terminal-input" placeholder="Escribe un comando (/plan, /compact, crewseb models list, memoseb context)..." autofocus />
-          <button id="sendBtn" class="bento-pill pill-white">• Enviar</button>
-        </div>
-      </section>
-
-      <!-- Column 3: Right Inspector (Plan, CrewSeb, MemoSeb, Vault) -->
-      <aside class="bento-card bento-inspector mac-inspector" id="sideInspector">
-        <span class="corner-cross tl">+</span>
-        <span class="corner-cross tr">+</span>
-        <span class="corner-cross bl">+</span>
-        <span class="corner-cross br">+</span>
-
-        <div class="bento-header">
-          <span class="bento-header-title">
-            <span>⚡</span> INSPECTOR TÁCTICO
-          </span>
-          <button class="session-close-btn" id="closeInspectorBtn" title="Cerrar Inspector">×</button>
-        </div>
-
-        <div class="inspector-tabs">
-          <button class="tab-btn active" data-tab="plan">📋 Plan & Mermaid</button>
-          <button class="tab-btn" data-tab="crew">👥 CrewSeb (<span id="crewCountBadge">10</span>)</button>
-          <button class="tab-btn" data-tab="memo">🧠 MemoSeb</button>
-          <button class="tab-btn" data-tab="vault">📁 .seb-vault</button>
-        </div>
-
-        <div class="inspector-content" id="inspectorContent">
-          <!-- Panel 1: Plan & Mermaid SVG -->
-          <div class="panel-view" id="panelPlan">
-            <div class="panel-header">
-              <h3 id="planTitle">Plan de Implementación Activo</h3>
-              <div class="header-tags" id="planSegmentBadge">Segmento: plans</div>
-            </div>
-            <div class="plan-markdown" id="planBody">
-              <p>Esperando la ejecución de <code>/plan</code> o escaneo de artefactos...</p>
-            </div>
-            <div class="mermaid-preview-container">
-              <h4>Visualización Interactiva SVG</h4>
-              <div class="mermaid-diagram-box" id="mermaidBox">
-                <!-- Inline SVG diagram -->
-              </div>
-            </div>
-            <div class="panel-footer">
-              <select id="memoCategorySelect" class="mac-select">
-                <option value="architecture">architecture</option>
-                <option value="decision">decision</option>
-                <option value="domain">domain</option>
-                <option value="convention">convention</option>
-                <option value="bugfix">bugfix</option>
-              </select>
-              <button class="bento-pill pill-cyan" id="syncMemoBtn">• 🧠 Enviar a memoseb</button>
-            </div>
-          </div>
-
-          <!-- Panel 2: CrewSeb 10 Roles -->
-          <div class="panel-view" id="panelCrew" style="display: none;">
-            <div class="panel-header">
-              <h3>Tripulación crewseb</h3>
-              <span class="header-tags" id="crewConcurrencyLabel">Modo: parallel (cloud-tiered)</span>
-            </div>
-            <div class="crew-roster" id="crewRoster">
-              <!-- Crew specialists list -->
-            </div>
-          </div>
-
-          <!-- Panel 3: MemoSeb Live Memories -->
-          <div class="panel-view" id="panelMemo" style="display: none;">
-            <div class="panel-header">
-              <h3>Bóveda memoseb</h3>
-              <span class="header-tags" id="memoStatsLabel">Cargando...</span>
-            </div>
-            <div class="memo-feed" id="memoFeed">
-              <!-- Memories list -->
-            </div>
-          </div>
-
-          <!-- Panel 4: .seb-vault Folders -->
-          <div class="panel-view" id="panelVault" style="display: none;">
-            <div class="panel-header">
-              <h3>Carpetas Segmentadas (.seb-vault)</h3>
-            </div>
-            <div class="vault-tree" id="vaultTree">
-              <div class="segment-folder">📁 plans/ <span class="header-tags">activo</span></div>
-              <div class="segment-folder">📁 diagrams/ <span class="header-tags">.mmd</span></div>
-              <div class="segment-folder">📁 specs/ <span class="header-tags">bdd</span></div>
-              <div class="segment-folder">📁 reviews/ <span class="header-tags">qa</span></div>
-              <div class="segment-folder">📁 post-mortems/ <span class="header-tags">rca</span></div>
-            </div>
-          </div>
-        </div>
-      </aside>
+        <section id="planContent" class="plan-article"></section>
+      </article>
     </main>
-
-    <!-- Bottom Telemetry Statusbar: Bento Card -->
-    <footer class="bento-card bento-statusbar mac-statusbar">
-      <span class="corner-cross bl">+</span>
-      <span class="corner-cross br">+</span>
-
-      <div class="status-left">
-        <span class="status-pill safe" id="optionalModeBadge">✓ 100% Opcional • Observador Pasivo</span>
-        <span class="status-text" id="activeProjectSlug">proyecto: deckseb</span>
-      </div>
-
-      <div class="status-center">
-        <div class="quota-meter-container">
-          <div class="quota-meter-labels">
-            <span>Contexto Restante: <strong id="contextRemainingLabel">85%</strong></span>
-            <span id="tokenCountsLabel">30,000 / 200,000 tokens</span>
-          </div>
-          <div class="quota-bar-track">
-            <div class="quota-bar-fill safe" id="quotaBarFill" style="width: 85%;"></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="status-right">
-        <button class="bento-pill pill-petrol pill-mini" id="compactQuickBtn" title="Inyectar /compact en la sesión activa">
-          • ⚡ /compact
-        </button>
-      </div>
-    </footer>
   </div>
 
   <script>
-    // Client state
-    let activeTheme = 'dark';
-    let activeSessionId = '';
-    let sessions = [];
-    let isLeftSidebarOpen = true;
-    let isInspectorOpen = true;
+    (function() {
+      // --- State ---
+      let currentPlans = [];
+      let activePlanId = null;
 
-    // ANSI escape code parser to HTML
-    function ansiToHtml(text) {
-      if (!text) return '';
-      return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\\x1b\\[1;34m/g, '<span style="color:#60a5fa;font-weight:bold;">')
-        .replace(/\\x1b\\[1;35m/g, '<span style="color:#c084fc;font-weight:bold;">')
-        .replace(/\\x1b\\[1;36m/g, '<span style="color:#38bdf8;font-weight:bold;">')
-        .replace(/\\x1b\\[38;5;39m/g, '<span style="color:#38bdf8;">')
-        .replace(/\\x1b\\[32m/g, '<span style="color:#34d399;">')
-        .replace(/\\x1b\\[31m/g, '<span style="color:#f87171;">')
-        .replace(/\\x1b\\[33m/g, '<span style="color:#fbbf24;">')
-        .replace(/\\x1b\\[36m/g, '<span style="color:#22d3ee;">')
-        .replace(/\\x1b\\[90m/g, '<span style="color:#94a3b8;">')
-        .replace(/\\x1b\\[1m/g, '<span style="font-weight:bold;">')
-        .replace(/\\x1b\\[0m/g, '</span>');
-    }
+      const emptyStateEl = document.getElementById('emptyState');
+      const planViewEl = document.getElementById('planView');
+      const planSelector = document.getElementById('planSelector');
+      const planSegmentEl = document.getElementById('planSegment');
+      const planTitleEl = document.getElementById('planTitle');
+      const planPathEl = document.getElementById('planPath');
+      const planTimestampEl = document.getElementById('planTimestamp');
+      const planContentEl = document.getElementById('planContent');
+      const liveDot = document.getElementById('liveDot');
+      const liveText = document.getElementById('liveText');
+      const themeToggleBtn = document.getElementById('themeToggleBtn');
+      const themeIcon = document.getElementById('themeIcon');
 
-    // Dynamic pure SVG renderer for Mermaid flowcharts
-    function renderMermaidSvg(mermaidCode) {
-      if (!mermaidCode) return '<p style="color:var(--bento-text-muted);">Sin diagrama Mermaid.</p>';
-      
-      // Extract nodes and connections
-      const lines = mermaidCode.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
-      const nodes = [];
-      const nodeMap = new Map();
+      // --- Theme Management ---
+      function initTheme() {
+        const saved = localStorage.getItem('deckseb-theme');
+        const theme = saved || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        applyTheme(theme);
+      }
 
-      // Find node definitions: ID["Label"] or ID[Label]
-      const nodeRegex = /([A-Za-z0-9_]+)\\["?([^"\\]]+)"?\\]/g;
-      lines.forEach(line => {
-        let match;
-        while ((match = nodeRegex.exec(line)) !== null) {
-          const id = match[1];
-          const label = match[2];
-          if (!nodeMap.has(id)) {
-            const nodeObj = { id, label, index: nodes.length };
-            nodes.push(nodeObj);
-            nodeMap.set(id, nodeObj);
-          }
+      function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('deckseb-theme', theme);
+        if (themeIcon) {
+          themeIcon.textContent = theme === 'dark' ? '☀️' : '🌙';
         }
-      });
-
-      if (nodes.length === 0) {
-        // Fallback default nodes if custom format
-        nodes.push(
-          { id: 'Host', label: 'Terminal Host', index: 0 },
-          { id: 'Core', label: 'deckseb Core', index: 1 },
-          { id: 'UI', label: 'Sixzone Bento UI', index: 2 },
-          { id: 'Vault', label: '.seb-vault', index: 3 }
-        );
       }
 
-      const totalNodes = nodes.length;
-      const nodeWidth = 140;
-      const nodeHeight = 44;
-      const spacingX = 40;
-      const startX = 20;
-      const totalWidth = startX * 2 + totalNodes * nodeWidth + (totalNodes - 1) * spacingX;
-      const totalHeight = 110;
-
-      let svg = '<svg viewBox="0 0 ' + totalWidth + ' ' + totalHeight + '" class="bento-mermaid-svg" xmlns="http://www.w3.org/2000/svg">';
-      svg += '<defs>';
-      svg += '  <linearGradient id="nodeGrad" x1="0%" y1="0%" x2="100%" y2="100%">';
-      svg += '    <stop offset="0%" stop-color="#0b3142" />';
-      svg += '    <stop offset="100%" stop-color="#07131b" />';
-      svg += '  </linearGradient>';
-      svg += '  <marker id="cyanArrow" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">';
-      svg += '    <polygon points="0 0, 8 3.5, 0 7" fill="#38bdf8" />';
-      svg += '  </marker>';
-      svg += '</defs>';
-
-      // Draw connection lines
-      for (let i = 0; i < totalNodes - 1; i++) {
-        const x1 = startX + i * (nodeWidth + spacingX) + nodeWidth;
-        const y1 = totalHeight / 2;
-        const x2 = startX + (i + 1) * (nodeWidth + spacingX);
-        const y2 = totalHeight / 2;
-        svg += '<path d="M ' + x1 + ' ' + y1 + ' L ' + (x2 - 2) + ' ' + y2 + '" stroke="#1ca3c4" stroke-width="2" stroke-dasharray="4 2" marker-end="url(#cyanArrow)" />';
-      }
-
-      // Draw nodes
-      nodes.forEach((n, idx) => {
-        const x = startX + idx * (nodeWidth + spacingX);
-        const y = (totalHeight - nodeHeight) / 2;
-        svg += '<g transform="translate(' + x + ',' + y + ')">';
-        svg += '  <rect width="' + nodeWidth + '" height="' + nodeHeight + '" rx="10" ry="10" fill="url(#nodeGrad)" stroke="#38bdf8" stroke-width="1.6" />';
-        svg += '  <text x="' + (nodeWidth / 2) + '" y="' + (nodeHeight / 2 + 4) + '" fill="#ffffff" font-size="11.5" font-weight="600" text-anchor="middle" font-family="-apple-system, sans-serif">' + n.label + '</text>';
-        svg += '</g>';
-      });
-
-      svg += '</svg>';
-      return svg;
-    }
-
-    // Render Sessions in Sidebar and Tabs
-    function renderSessions() {
-      const listContainer = document.getElementById('sessionsList');
-      const tabsContainer = document.getElementById('tabsContainer');
-      const countBadge = document.getElementById('sessionCountBadge');
-
-      listContainer.innerHTML = '';
-      tabsContainer.innerHTML = '';
-      countBadge.innerText = sessions.length + ' activa' + (sessions.length > 1 ? 's' : '');
-
-      sessions.forEach(s => {
-        const isActive = s.id === activeSessionId;
-
-        // 1. Sidebar Card
-        const card = document.createElement('div');
-        card.className = 'session-item-card ' + (isActive ? 'active' : '');
-        card.onclick = (e) => {
-          if (e.target.classList.contains('session-close-btn')) return;
-          selectSession(s.id);
-        };
-
-        const shortCwd = s.cwd ? (s.cwd.length > 25 ? '...' + s.cwd.slice(-22) : s.cwd) : '~/deckseb';
-        card.innerHTML = 
-          '<div class="session-item-left">' +
-            '<span class="status-dot ' + (s.status === 'running' ? 'running' : 'idle') + '"></span>' +
-            '<div class="session-meta">' +
-              '<span class="session-title-text">' + s.title + '</span>' +
-              '<span class="session-sub-text">PID ' + (s.pid || '-') + ' • ' + shortCwd + '</span>' +
-            '</div>' +
-          '</div>' +
-          '<button class="session-close-btn" title="Cerrar sesión">×</button>';
-
-        const closeBtn = card.querySelector('.session-close-btn');
-        closeBtn.onclick = (e) => {
-          e.stopPropagation();
-          killSession(s.id);
-        };
-        listContainer.appendChild(card);
-
-        // 2. Terminal Tab
-        const tab = document.createElement('div');
-        tab.className = 'terminal-tab ' + (isActive ? 'active' : '');
-        tab.onclick = () => selectSession(s.id);
-        tab.innerHTML = '<span>• ' + s.title + '</span>';
-        tabsContainer.appendChild(tab);
-      });
-
-      const current = sessions.find(s => s.id === activeSessionId);
-      if (current) {
-        document.getElementById('activeHostLabel').innerText = current.title;
-        document.getElementById('activePidBadge').innerText = 'PID: ' + (current.pid || '-');
-      }
-    }
-
-    function renderTerminal() {
-      const term = document.getElementById('termOutput');
-      const current = sessions.find(s => s.id === activeSessionId);
-      if (!current) {
-        term.innerHTML = '<div class="terminal-line" style="color:var(--bento-text-muted);">Sin sesiones activas. Crea una nueva sesión arriba.</div>';
-        return;
-      }
-
-      term.innerHTML = (current.lines || []).map(line => {
-        return '<div class="terminal-line">' + ansiToHtml(line) + '</div>';
-      }).join('');
-
-      term.scrollTop = term.scrollHeight;
-    }
-
-    function selectSession(id) {
-      activeSessionId = id;
-      renderSessions();
-      renderTerminal();
-    }
-
-    // Terminal API Handlers
-    async function fetchSessions() {
-      try {
-        const res = await fetch('/api/terminal/sessions');
-        const data = await res.json();
-        sessions = data.sessions || [];
-        if (sessions.length > 0 && (!activeSessionId || !sessions.some(s => s.id === activeSessionId))) {
-          activeSessionId = sessions[0].id;
-        }
-        renderSessions();
-        renderTerminal();
-      } catch (err) {
-        console.error('Error fetching terminal sessions:', err);
-      }
-    }
-
-    async function createTerminalSession(hostId) {
-      try {
-        const res = await fetch('/api/terminal/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hostId, title: hostId + ' · deckseb' })
+      if (themeToggleBtn) {
+        themeToggleBtn.addEventListener('click', () => {
+          const current = document.documentElement.getAttribute('data-theme') || 'dark';
+          applyTheme(current === 'dark' ? 'light' : 'dark');
         });
-        const data = await res.json();
-        if (data.session) {
-          sessions.push(data.session);
-          activeSessionId = data.session.id;
-          renderSessions();
-          renderTerminal();
-        }
-      } catch (err) {
-        console.error('Error creating terminal session:', err);
-      }
-    }
-
-    async function killSession(sessionId) {
-      if (sessions.length <= 1) {
-        alert('Debe permanecer al menos una sesión de terminal activa.');
-        return;
-      }
-      try {
-        await fetch('/api/terminal/kill', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId })
-        });
-        sessions = sessions.filter(s => s.id !== sessionId);
-        if (activeSessionId === sessionId) {
-          activeSessionId = sessions[0]?.id || '';
-        }
-        renderSessions();
-        renderTerminal();
-      } catch (err) {
-        console.error('Error killing session:', err);
-      }
-    }
-
-    async function executeCommand(command) {
-      if (!command || !command.trim() || !activeSessionId) return;
-      const inp = document.getElementById('termInput');
-      inp.value = '';
-
-      const current = sessions.find(s => s.id === activeSessionId);
-      if (current) {
-        current.lines.push('❯ ' + command);
-        renderTerminal();
       }
 
-      try {
-        const res = await fetch('/api/terminal/input', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: activeSessionId, command })
-        });
-        const data = await res.json();
+      // --- Markdown & Mermaid Renderer in Pure JS ---
+      function escapeHtml(str) {
+        return (str || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
 
-        if (current) {
-          if (data.lines) {
-            current.lines = data.lines;
+      function renderInline(text) {
+        let out = escapeHtml(text);
+        // Code: inline code
+        out = out.replace(new RegExp('\\x60([^\\x60]+)\\x60', 'g'), '<code>$1</code>');
+        // Bold: **text** or __text__
+        out = out.replace(/(\*\*|__)(.*?)\\1/g, '<strong>$2</strong>');
+        // Italic: *text* or _text_
+        out = out.replace(/(\*|_)(.*?)\\1/g, '<em>$2</em>');
+        // Links: [text](url)
+        out = out.replace(/\\[([^\\]]+)\\]\\(([^\\)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+        return out;
+      }
+
+      // Lightweight Sugiyama/Layered Layout SVG Mermaid Flowchart Generator
+      function renderMermaidSvg(code) {
+        try {
+          const lines = code.split('\\n').map(l => l.trim()).filter(l => l && !l.startsWith('%%'));
+          if (lines.length === 0) return null;
+
+          const firstLine = lines[0].toLowerCase();
+          const isFlow = firstLine.startsWith('flowchart') || firstLine.startsWith('graph');
+          const isLR = firstLine.includes('lr');
+
+          const nodes = new Map();
+          const edges = [];
+
+          function ensureNode(id, label) {
+            if (!nodes.has(id)) {
+              nodes.set(id, { id, label: label || id });
+            } else if (label && nodes.get(id).label === id) {
+              nodes.get(id).label = label;
+            }
           }
-          if (data.cwd) {
-            current.cwd = data.cwd;
+
+          // Parse lines
+          for (let i = (isFlow ? 1 : 0); i < lines.length; i++) {
+            const line = lines[i];
+            // Match edge patterns: A --> B, A -->|text| B, A -.-> B, A --- B, etc.
+            const edgeMatch = line.match(/^([A-Za-z0-9_.-]+(?:\\[[^\\]]+\\]|\\([^\\)]+\\)|\\{\\{[^\\}]+\\}\\}|\\{[^\\}]+\\})?)\\s*(-->|-.->|---|==>)(?:\\|([^|]+)\\|)?\\s*([A-Za-z0-9_.-]+(?:\\[[^\\]]+\\]|\\([^\\)]+\\)|\\{\\{[^\\}]+\\}\\}|\\{[^\\}]+\\})?)/);
+            if (edgeMatch) {
+              const parseNodePart = (raw) => {
+                const m = raw.match(/^([A-Za-z0-9_.-]+)(?:\\[\"?([^\"]+?)\"?\\]|\\(\"?([^\"]+?)\"?\\)|\\{\"?([^\"]+?)\"?\\})?$/);
+                if (m) {
+                  const id = m[1];
+                  const label = m[2] || m[3] || m[4] || id;
+                  return { id, label };
+                }
+                return { id: raw, label: raw };
+              };
+
+              const from = parseNodePart(edgeMatch[1]);
+              const connector = edgeMatch[2];
+              const edgeLabel = edgeMatch[3] || '';
+              const to = parseNodePart(edgeMatch[4]);
+
+              ensureNode(from.id, from.label);
+              ensureNode(to.id, to.label);
+              edges.push({ from: from.id, to: to.id, label: edgeLabel, style: connector });
+            } else {
+              // Standalone node definition: ID["Label"] or ID[Label]
+              const nodeMatch = line.match(/^([A-Za-z0-9_.-]+)(?:\\[\"?([^\"]+?)\"?\\]|\\(\"?([^\"]+?)\"?\\)|\\{\"?([^\"]+?)\"?\\})$/);
+              if (nodeMatch) {
+                const id = nodeMatch[1];
+                const label = nodeMatch[2] || nodeMatch[3] || nodeMatch[4] || id;
+                ensureNode(id, label);
+              }
+            }
           }
+
+          if (nodes.size === 0) return null;
+
+          // Rank / Layer assignment
+          const inDegree = new Map();
+          for (const id of nodes.keys()) inDegree.set(id, 0);
+          for (const e of edges) inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
+
+          const levels = new Map();
+          const queue = [];
+          for (const [id, deg] of inDegree.entries()) {
+            if (deg === 0) {
+              levels.set(id, 0);
+              queue.push(id);
+            }
+          }
+          if (queue.length === 0 && nodes.size > 0) {
+            const firstId = nodes.keys().next().value;
+            levels.set(firstId, 0);
+            queue.push(firstId);
+          }
+
+          while (queue.length > 0) {
+            const curr = queue.shift();
+            const currLevel = levels.get(curr) || 0;
+            for (const e of edges) {
+              if (e.from === curr) {
+                const nextLevel = currLevel + 1;
+                if (!levels.has(e.to) || levels.get(e.to) < nextLevel) {
+                  levels.set(e.to, nextLevel);
+                  queue.push(e.to);
+                }
+              }
+            }
+          }
+
+          // Fallback for disconnected nodes
+          for (const id of nodes.keys()) {
+            if (!levels.has(id)) levels.set(id, 0);
+          }
+
+          // Group by level
+          const maxLevel = Math.max(0, ...Array.from(levels.values()));
+          const layers = [];
+          for (let i = 0; i <= maxLevel; i++) layers.push([]);
+          for (const [id, lvl] of levels.entries()) {
+            layers[lvl].push(nodes.get(id));
+          }
+
+          // Compute coordinates
+          const nodeW = 160;
+          const nodeH = 46;
+          const gapX = isLR ? 80 : 36;
+          const gapY = isLR ? 28 : 64;
+
+          const coords = new Map();
+          let totalW = 0;
+          let totalH = 0;
+
+          if (!isLR) {
+            // TD / TB layout
+            const layerWidths = layers.map(layer => layer.length * nodeW + Math.max(0, layer.length - 1) * gapX);
+            const maxWidth = Math.max(400, ...layerWidths) + 80;
+            totalW = maxWidth;
+            totalH = layers.length * (nodeH + gapY) + 40;
+
+            layers.forEach((layer, lvlIdx) => {
+              const y = 30 + lvlIdx * (nodeH + gapY);
+              const layerW = layer.length * nodeW + Math.max(0, layer.length - 1) * gapX;
+              const startX = (maxWidth - layerW) / 2;
+              layer.forEach((node, idx) => {
+                const x = startX + idx * (nodeW + gapX);
+                coords.set(node.id, { x, y, w: nodeW, h: nodeH, cx: x + nodeW / 2, cy: y + nodeH / 2 });
+              });
+            });
+          } else {
+            // LR layout
+            const layerHeights = layers.map(layer => layer.length * nodeH + Math.max(0, layer.length - 1) * gapY);
+            const maxHeight = Math.max(200, ...layerHeights) + 60;
+            totalH = maxHeight;
+            totalW = layers.length * (nodeW + gapX) + 80;
+
+            layers.forEach((layer, lvlIdx) => {
+              const x = 40 + lvlIdx * (nodeW + gapX);
+              const layerH = layer.length * nodeH + Math.max(0, layer.length - 1) * gapY;
+              const startY = (maxHeight - layerH) / 2;
+              layer.forEach((node, idx) => {
+                const y = startY + idx * (nodeH + gapY);
+                coords.set(node.id, { x, y, w: nodeW, h: nodeH, cx: x + nodeW / 2, cy: y + nodeH / 2 });
+              });
+            });
+          }
+
+          // Build SVG elements
+          let svgContent = '';
+          const markerId = 'arrow-' + Math.random().toString(36).slice(2, 7);
+
+          svgContent += '<defs>';
+          svgContent += '<marker id="' + markerId + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">';
+          svgContent += '<path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="var(--svg-edge-arrow, #38bdf8)"/>';
+          svgContent += '</marker>';
+          svgContent += '</defs>';
+
+          // Draw edges
+          edges.forEach((e) => {
+            const fromC = coords.get(e.from);
+            const toC = coords.get(e.to);
+            if (!fromC || !toC) return;
+
+            let pathD = '';
+            if (!isLR) {
+              const startX = fromC.cx;
+              const startY = fromC.y + fromC.h;
+              const endX = toC.cx;
+              const endY = toC.y;
+              const midY = (startY + endY) / 2;
+              pathD = 'M ' + startX + ' ' + startY + ' C ' + startX + ' ' + midY + ', ' + endX + ' ' + midY + ', ' + endX + ' ' + endY;
+            } else {
+              const startX = fromC.x + fromC.w;
+              const startY = fromC.cy;
+              const endX = toC.x;
+              const endY = toC.cy;
+              const midX = (startX + endX) / 2;
+              pathD = 'M ' + startX + ' ' + startY + ' C ' + midX + ' ' + startY + ', ' + midX + ' ' + endY + ', ' + endX + ' ' + endY;
+            }
+
+            const strokeDash = e.style === '-.->' ? 'stroke-dasharray="4,4"' : '';
+            svgContent += '<path d="' + pathD + '" fill="none" stroke="var(--svg-edge-stroke, #64748b)" stroke-width="2" ' + strokeDash + ' marker-end="url(#' + markerId + ')"/>';
+
+            if (e.label) {
+              const midX = (fromC.cx + toC.cx) / 2;
+              const midY = (fromC.cy + toC.cy) / 2;
+              svgContent += '<rect x="' + (midX - 24) + '" y="' + (midY - 9) + '" width="48" height="18" rx="4" fill="var(--bg-surface, #0f151d)" stroke="var(--border-subtle, rgba(255,255,255,0.1))"/>';
+              svgContent += '<text x="' + midX + '" y="' + (midY + 4) + '" text-anchor="middle" font-size="10.5" fill="var(--text-muted, #94a3b8)" font-family="var(--mac-font-sans)">' + escapeHtml(e.label) + '</text>';
+            }
+          });
+
+          // Draw nodes
+          coords.forEach((pos, id) => {
+            const node = nodes.get(id);
+            const label = node ? node.label : id;
+            svgContent += '<g class="mermaid-node" transform="translate(' + pos.x + ',' + pos.y + ')">';
+            svgContent += '<rect width="' + pos.w + '" height="' + pos.h + '" rx="8" ry="8" fill="var(--svg-node-fill, #151d27)" stroke="var(--svg-node-stroke, #38bdf8)" stroke-width="1.6"/>';
+            svgContent += '<text x="' + (pos.w / 2) + '" y="' + (pos.h / 2 + 4.5) + '" text-anchor="middle" fill="var(--svg-node-text, #f1f5f9)" font-size="12" font-weight="600" font-family="var(--mac-font-sans)">' + escapeHtml(label.length > 22 ? label.slice(0, 20) + '…' : label) + '</text>';
+            svgContent += '</g>';
+          });
+
+          return '<svg viewBox="0 0 ' + totalW + ' ' + totalH + '" width="' + totalW + '" height="' + totalH + '" class="mermaid-svg" xmlns="http://www.w3.org/2000/svg">' + svgContent + '</svg>';
+        } catch (err) {
+          return null;
         }
-        renderSessions();
-        renderTerminal();
+      }
 
-        // Handle detected artifact
-        if (data.detectedArtifact) {
-          openPlanInInspector(data.detectedArtifact);
+      function renderMarkdown(md) {
+        if (!md || typeof md !== 'string') return '';
+        const lines = md.replace(/\\r\\n/g, '\\n').split('\\n');
+        let html = '';
+        let i = 0;
+
+        while (i < lines.length) {
+          const line = lines[i];
+
+          // 1. Fenced Code Block
+          if (line.trim().startsWith('\x60\x60\x60')) {
+            const fence = line.trim();
+            const lang = fence.slice(3).trim();
+            i++;
+            const codeLines = [];
+            while (i < lines.length && !lines[i].trim().startsWith('\x60\x60\x60')) {
+              codeLines.push(lines[i]);
+              i++;
+            }
+            i++; // skip closing fence
+            const rawCode = codeLines.join('\\n');
+
+            if (lang.toLowerCase() === 'mermaid') {
+              const svg = renderMermaidSvg(rawCode);
+              const cardId = 'mermaid-' + Math.random().toString(36).slice(2, 8);
+              html += '<div class="mermaid-card" id="' + cardId + '">';
+              html += '<div class="mermaid-header">';
+              html += '<div class="mermaid-header-title">';
+              html += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>';
+              html += '<span>Diagrama de Flujo</span>';
+              html += '</div>';
+              html += '<button type="button" class="mermaid-toggle-btn" onclick="toggleMermaidCode(\\'' + cardId + '\\')">Ver código</button>';
+              html += '</div>';
+              html += '<div class="mermaid-viewport">';
+              if (svg) {
+                html += svg;
+              } else {
+                html += '<pre style="margin:0;font-size:12px;color:var(--text-secondary);">' + escapeHtml(rawCode) + '</pre>';
+              }
+              html += '</div>';
+              html += '<pre class="mermaid-raw"><code>' + escapeHtml(rawCode) + '</code></pre>';
+              html += '</div>';
+            } else {
+              const displayLang = lang || 'text';
+              html += '<div class="code-block">';
+              html += '<div class="code-header">';
+              html += '<span class="code-lang-tag">' + escapeHtml(displayLang) + '</span>';
+              html += '<button class="code-copy-btn" onclick="copyCode(this)">Copiar</button>';
+              html += '</div>';
+              html += '<pre><code class="language-' + escapeHtml(displayLang) + '">' + escapeHtml(rawCode) + '</code></pre>';
+              html += '</div>';
+            }
+            continue;
+          }
+
+          // 2. GitHub-style Alert: > [!NOTE], > [!IMPORTANT], etc.
+          const alertMatch = line.match(/^>\\s*\\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\\]/i);
+          if (alertMatch) {
+            const type = alertMatch[1].toLowerCase();
+            const alertLines = [];
+            i++;
+            while (i < lines.length && lines[i].startsWith('>')) {
+              alertLines.push(lines[i].replace(/^>\\s?/, ''));
+              i++;
+            }
+            const alertBody = alertLines.map(l => renderInline(l)).join('<br>');
+            html += '<div class="gh-alert gh-alert-' + type + '">';
+            html += '<div class="gh-alert-title">';
+            html += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+            html += '<span>' + type.toUpperCase() + '</span>';
+            html += '</div>';
+            html += '<div class="gh-alert-content">' + alertBody + '</div>';
+            html += '</div>';
+            continue;
+          }
+
+          // 3. Regular Blockquote
+          if (line.startsWith('>')) {
+            const bqLines = [];
+            while (i < lines.length && lines[i].startsWith('>')) {
+              bqLines.push(lines[i].replace(/^>\\s?/, ''));
+              i++;
+            }
+            html += '<blockquote>' + bqLines.map(l => renderInline(l)).join('<br>') + '</blockquote>';
+            continue;
+          }
+
+          // 4. Markdown Table
+          if (line.includes('|') && i + 1 < lines.length && lines[i + 1].includes('|') && /\\|\\s*:?-+:?\\s*\\|/.test(lines[i + 1])) {
+            const headerRow = line.split('|').map(c => c.trim()).filter((c, idx, arr) => !(idx === 0 && c === '') && !(idx === arr.length - 1 && c === ''));
+            i += 2; // skip header and delimiter
+            const bodyRows = [];
+            while (i < lines.length && lines[i].includes('|')) {
+              const row = lines[i].split('|').map(c => c.trim()).filter((c, idx, arr) => !(idx === 0 && c === '') && !(idx === arr.length - 1 && c === ''));
+              if (row.length > 0) bodyRows.push(row);
+              i++;
+            }
+
+            html += '<div class="plan-table-container"><table class="plan-table"><thead><tr>';
+            headerRow.forEach(h => { html += '<th>' + renderInline(h) + '</th>'; });
+            html += '</tr></thead><tbody>';
+            bodyRows.forEach(row => {
+              html += '<tr>';
+              row.forEach(cell => { html += '<td>' + renderInline(cell) + '</td>'; });
+              html += '</tr>';
+            });
+            html += '</tbody></table></div>';
+            continue;
+          }
+
+          // 5. Headings: #, ##, ###, ####
+          const h1 = line.match(/^#\\s+(.+)$/);
+          if (h1) { html += '<h1>' + renderInline(h1[1]) + '</h1>'; i++; continue; }
+          const h2 = line.match(/^##\\s+(.+)$/);
+          if (h2) { html += '<h2>' + renderInline(h2[1]) + '</h2>'; i++; continue; }
+          const h3 = line.match(/^###\\s+(.+)$/);
+          if (h3) { html += '<h3>' + renderInline(h3[1]) + '</h3>'; i++; continue; }
+          const h4 = line.match(/^####\\s+(.+)$/);
+          if (h4) { html += '<h4>' + renderInline(h4[1]) + '</h4>'; i++; continue; }
+
+          // 6. Horizontal Rule: --- or ***
+          if (/^(\\-\\-\\-|\\*\\*\\*|___)$/.test(line.trim())) {
+            html += '<hr>';
+            i++;
+            continue;
+          }
+
+          // 7. Checkboxes & Lists
+          if (/^\\s*[-*]\\s+\\[([ xX])\\]\\s+(.+)$/.test(line)) {
+            html += '<ul class="task-list">';
+            while (i < lines.length) {
+              const taskMatch = lines[i].match(/^\\s*[-*]\\s+\\[([ xX])\\]\\s+(.+)$/);
+              if (!taskMatch) break;
+              const checked = taskMatch[1].toLowerCase() === 'x';
+              html += '<li class="task-list-item">';
+              html += '<input type="checkbox" ' + (checked ? 'checked' : '') + ' disabled>';
+              html += '<span>' + renderInline(taskMatch[2]) + '</span>';
+              html += '</li>';
+              i++;
+            }
+            html += '</ul>';
+            continue;
+          }
+
+          // 8. Standard Unordered List
+          if (/^\\s*[-*]\\s+(.+)$/.test(line)) {
+            html += '<ul>';
+            while (i < lines.length) {
+              const liMatch = lines[i].match(/^\\s*[-*]\\s+(.+)$/);
+              if (!liMatch || /^\s*[-*]\s+\[[ xX]\]/.test(lines[i])) break;
+              html += '<li>' + renderInline(liMatch[1]) + '</li>';
+              i++;
+            }
+            html += '</ul>';
+            continue;
+          }
+
+          // 9. Ordered List
+          if (/^\\s*\\d+\\.\\s+(.+)$/.test(line)) {
+            html += '<ol>';
+            while (i < lines.length) {
+              const olMatch = lines[i].match(/^\\s*\\d+\\.\\s+(.+)$/);
+              if (!olMatch) break;
+              html += '<li>' + renderInline(olMatch[1]) + '</li>';
+              i++;
+            }
+            html += '</ol>';
+            continue;
+          }
+
+          // 10. Paragraph
+          const trimmed = line.trim();
+          if (trimmed.length > 0) {
+            html += '<p>' + renderInline(trimmed) + '</p>';
+          }
+          i++;
         }
 
-        // Handle token quota
-        if (data.tokenUsage) {
-          updateQuota(data.tokenUsage.remainingPercent, data.tokenUsage.used, data.tokenUsage.max);
+        return html;
+      }
+
+      // --- Global Helpers for Interactivity ---
+      window.toggleMermaidCode = function(cardId) {
+        const card = document.getElementById(cardId);
+        if (!card) return;
+        const raw = card.querySelector('.mermaid-raw');
+        const btn = card.querySelector('.mermaid-toggle-btn');
+        if (raw && btn) {
+          const isVisible = raw.classList.toggle('visible');
+          btn.textContent = isVisible ? 'Ocultar código' : 'Ver código';
         }
-      } catch (err) {
-        if (current) {
-          current.lines.push('\\x1b[31mError de comunicación: ' + err.message + '\\x1b[0m');
-          renderTerminal();
-        }
-      }
-    }
-
-    function openPlanInInspector(artifact) {
-      // Ensure inspector is open
-      if (!isInspectorOpen) {
-        toggleInspector();
-      }
-      switchInspectorTab('plan');
-
-      document.getElementById('planTitle').innerText = artifact.title || 'Plan de Implementación';
-      document.getElementById('planSegmentBadge').innerText = 'Segmento: ' + (artifact.segment || 'plans');
-      document.getElementById('planBody').innerHTML = 
-        '<h4>Contenido Detectado:</h4><p>' + 
-        (artifact.content ? artifact.content.replace(/\\n/g, '<br/>') : 'Plan escaneado correctamente.') + 
-        '</p>';
-
-      const mbox = document.getElementById('mermaidBox');
-      const mermaidCode = artifact.mermaidBlocks && artifact.mermaidBlocks.length > 0 ? artifact.mermaidBlocks[0] : '';
-      mbox.innerHTML = renderMermaidSvg(mermaidCode) + 
-        (mermaidCode ? '<pre class="mermaid-raw">' + mermaidCode + '</pre>' : '');
-    }
-
-    function updateQuota(remainingPercent, usedTokens, maxTokens) {
-      document.getElementById('contextRemainingLabel').innerText = remainingPercent + '%';
-      document.getElementById('tokenCountsLabel').innerText = 
-        usedTokens.toLocaleString() + ' / ' + maxTokens.toLocaleString() + ' tokens';
-      const bar = document.getElementById('quotaBarFill');
-      bar.style.width = remainingPercent + '%';
-      bar.className = 'quota-bar-fill ' + (remainingPercent < 25 ? 'critical' : remainingPercent < 50 ? 'warning' : 'safe');
-    }
-
-    function switchInspectorTab(tabId) {
-      document.querySelectorAll('.inspector-tabs .tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === tabId);
-      });
-      document.getElementById('panelPlan').style.display = tabId === 'plan' ? 'flex' : 'none';
-      document.getElementById('panelCrew').style.display = tabId === 'crew' ? 'flex' : 'none';
-      document.getElementById('panelMemo').style.display = tabId === 'memo' ? 'flex' : 'none';
-      document.getElementById('panelVault').style.display = tabId === 'vault' ? 'flex' : 'none';
-
-      if (tabId === 'memo') {
-        loadMemosebMemories();
-      } else if (tabId === 'crew') {
-        loadCrewRoster();
-      }
-    }
-
-    function toggleSidebar() {
-      const sidebar = document.getElementById('leftSidebar');
-      isLeftSidebarOpen = !isLeftSidebarOpen;
-      sidebar.classList.toggle('collapsed', !isLeftSidebarOpen);
-    }
-
-    function toggleInspector() {
-      const insp = document.getElementById('sideInspector');
-      isInspectorOpen = !isInspectorOpen;
-      insp.classList.toggle('collapsed', !isInspectorOpen);
-    }
-
-    async function loadMemosebMemories() {
-      try {
-        const res = await fetch('/api/memoseb/memories');
-        const data = await res.json();
-        const feed = document.getElementById('memoFeed');
-        document.getElementById('memoStatsLabel').innerText = (data.totalCount || 0) + ' memorias activas';
-
-        if (data.memories && data.memories.length > 0) {
-          feed.innerHTML = data.memories.map(m => {
-            return '<div class="memo-card">' +
-              '<span class="memo-card-cat">[' + m.category + ']</span>' +
-              '<strong class="memo-card-title">' + m.title + '</strong>' +
-              '<span class="memo-card-snippet">' + (m.content || '') + '</span>' +
-            '</div>';
-          }).join('');
-        } else {
-          feed.innerHTML = '<p style="color:var(--bento-text-muted);">Sin memorias registradas en memoseb.</p>';
-        }
-      } catch (err) {
-        console.warn('Error loading memories:', err);
-      }
-    }
-
-    async function loadCrewRoster() {
-      try {
-        const res = await fetch('/api/snapshot');
-        const snap = await res.json();
-        const roster = document.getElementById('crewRoster');
-        const personas = snap.personas || {
-          researcher: 'Atlas', analyst: 'Iris', architect: 'Nova', developer: 'Orion',
-          'qa-automation': 'Lyra', devops: 'Kael', sre: 'Vanguard', security: 'Aegis',
-          'code-reviewer': 'Solon', documenter: 'Clio'
-        };
-        const keys = Object.keys(personas);
-        document.getElementById('crewCountBadge').innerText = String(keys.length);
-        document.getElementById('crewConcurrencyLabel').innerText = 
-          'Modo: ' + (snap.concurrencyMode || 'parallel') + ' (preset: ' + (snap.preset || 'cloud-tiered') + ')';
-
-        roster.innerHTML = keys.map(role => {
-          return '<div class="crew-card">' +
-            '<div class="crew-role"><strong>' + role + '</strong></div>' +
-            '<div class="crew-persona">[' + personas[role] + ' · ' + role + ']</div>' +
-          '</div>';
-        }).join('');
-      } catch (err) {
-        console.warn('Error loading crew:', err);
-      }
-    }
-
-    // Event Bindings
-    document.getElementById('toggleSidebarBtn').onclick = toggleSidebar;
-    document.getElementById('toggleInspectorBtn').onclick = toggleInspector;
-    document.getElementById('closeInspectorBtn').onclick = toggleInspector;
-
-    document.getElementById('themeToggleBtn').onclick = () => {
-      activeTheme = activeTheme === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', activeTheme);
-      document.getElementById('themeIcon').innerText = activeTheme === 'dark' ? '☀️' : '🌙';
-      document.getElementById('themeLabel').innerText = activeTheme === 'dark' ? 'Claro' : 'Oscuro';
-    };
-
-    document.getElementById('simulatePlanBtn').onclick = () => {
-      executeCommand('/plan');
-    };
-
-    document.getElementById('compactQuickBtn').onclick = () => {
-      executeCommand('/compact');
-    };
-
-    document.getElementById('sendBtn').onclick = () => {
-      const inp = document.getElementById('termInput');
-      executeCommand(inp.value);
-    };
-
-    document.getElementById('termInput').onkeydown = (e) => {
-      if (e.key === 'Enter') {
-        executeCommand(e.target.value);
-      }
-    };
-
-    // Quick Command Pills
-    document.querySelectorAll('.quick-cmd-btn').forEach(btn => {
-      btn.onclick = () => {
-        executeCommand(btn.dataset.cmd);
       };
-    });
 
-    // Sidebar Host Creation Pills
-    document.querySelectorAll('.host-btn').forEach(btn => {
-      btn.onclick = () => {
-        createTerminalSession(btn.dataset.host);
+      window.copyCode = function(btn) {
+        const pre = btn.closest('.code-block').querySelector('code');
+        if (pre) {
+          navigator.clipboard.writeText(pre.innerText).then(() => {
+            const original = btn.textContent;
+            btn.textContent = '¡Copiado!';
+            setTimeout(() => { btn.textContent = original; }, 1500);
+          });
+        }
       };
-    });
 
-    // New Tab Selector
-    document.getElementById('newTabSelect').onchange = (e) => {
-      const val = e.target.value;
-      if (val) {
-        createTerminalSession(val);
-        e.target.value = '';
+      // --- Plan Display & Switcher ---
+      function displayPlan(plan) {
+        if (!plan) {
+          emptyStateEl.style.display = 'flex';
+          planViewEl.style.display = 'none';
+          activePlanId = null;
+          return;
+        }
+
+        activePlanId = plan.id;
+        emptyStateEl.style.display = 'none';
+        planViewEl.style.display = 'block';
+
+        planSegmentEl.textContent = plan.segment || 'plans';
+        planTitleEl.textContent = plan.title || 'Plan de Implementación';
+        planPathEl.textContent = plan.filePath || '~';
+
+        const dt = plan.detectedAt ? new Date(plan.detectedAt) : new Date();
+        planTimestampEl.textContent = dt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' · ' + dt.toLocaleDateString('es-ES');
+
+        planContentEl.innerHTML = renderMarkdown(plan.content || '');
       }
-    };
 
-    // Topbar Tabs Buttons
-    document.getElementById('topTabPlan').onclick = () => {
-      if (!isInspectorOpen) toggleInspector();
-      switchInspectorTab('plan');
-    };
-    document.getElementById('topTabCrew').onclick = () => {
-      if (!isInspectorOpen) toggleInspector();
-      switchInspectorTab('crew');
-    };
-    document.getElementById('topTabMemo').onclick = () => {
-      if (!isInspectorOpen) toggleInspector();
-      switchInspectorTab('memo');
-    };
-    document.getElementById('topTabVault').onclick = () => {
-      if (!isInspectorOpen) toggleInspector();
-      switchInspectorTab('vault');
-    };
+      function updatePlanSelector(plans, activeId) {
+        planSelector.innerHTML = '';
+        if (!plans || plans.length === 0) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.disabled = true;
+          opt.selected = true;
+          opt.textContent = 'Esperando planes…';
+          planSelector.appendChild(opt);
+          return;
+        }
 
-    // Inspector tab clicks
-    document.querySelectorAll('.inspector-tabs .tab-btn').forEach(btn => {
-      btn.onclick = () => switchInspectorTab(btn.dataset.tab);
-    });
+        plans.forEach((p, idx) => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = (idx === 0 ? '● ' : '') + (p.title || 'Plan sin título');
+          if (p.id === activeId) opt.selected = true;
+          planSelector.appendChild(opt);
+        });
+      }
 
-    // Sync to memoseb
-    document.getElementById('syncMemoBtn').onclick = async () => {
-      const btn = document.getElementById('syncMemoBtn');
-      const cat = document.getElementById('memoCategorySelect').value;
-      btn.disabled = true;
-      btn.innerText = 'Sincronizando...';
-      try {
-        await fetch('/api/sync-memoseb', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: document.getElementById('planTitle').innerText,
-            content: document.getElementById('planBody').innerText,
-            category: cat,
-            tags: ['deckseb', 'sixzone', 'architecture']
+      planSelector.addEventListener('change', (e) => {
+        const id = e.target.value;
+        const target = currentPlans.find(p => p.id === id);
+        if (target) displayPlan(target);
+      });
+
+      // --- Data Fetching & Server-Sent Events (SSE) ---
+      function loadInitialPlans() {
+        fetch('/api/plans')
+          .then(res => res.json())
+          .then(data => {
+            currentPlans = Array.isArray(data.plans) ? data.plans : [];
+            const active = data.activePlan || currentPlans[0] || null;
+            updatePlanSelector(currentPlans, active ? active.id : null);
+            displayPlan(active);
           })
-        });
-        btn.innerText = '✔ Aprendido en memoseb!';
-        setTimeout(() => {
-          btn.innerText = '• 🧠 Enviar a memoseb';
-          btn.disabled = false;
-        }, 2000);
-      } catch (err) {
-        btn.innerText = 'Error';
-        setTimeout(() => {
-          btn.innerText = '• 🧠 Enviar a memoseb';
-          btn.disabled = false;
-        }, 2000);
+          .catch(() => {
+            // Server might still be initializing
+          });
       }
-    };
 
-    // Initial Bootstrap
-    fetchSessions();
-    loadCrewRoster();
+      function connectEvents() {
+        const es = new EventSource('/api/events');
+
+        es.onopen = () => {
+          liveDot.classList.remove('disconnected');
+          liveText.textContent = 'En vivo';
+        };
+
+        es.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'init') {
+              currentPlans = Array.isArray(data.plans) ? data.plans : [];
+              const active = data.activePlan || currentPlans[0] || null;
+              updatePlanSelector(currentPlans, active ? active.id : null);
+              displayPlan(active);
+            } else if (data.type === 'plan:created' || data.type === 'plan:updated') {
+              const art = data.artifact;
+              const idx = currentPlans.findIndex(p => p.id === art.id || p.filePath === art.filePath);
+              if (idx >= 0) {
+                currentPlans[idx] = art;
+              } else {
+                currentPlans.unshift(art);
+              }
+              updatePlanSelector(currentPlans, art.id);
+              displayPlan(art);
+            }
+          } catch (e) {
+            console.error('Error handling SSE event:', e);
+          }
+        };
+
+        es.onerror = () => {
+          liveDot.classList.add('disconnected');
+          liveText.textContent = 'Reconectando…';
+        };
+      }
+
+      // Initialize
+      initTheme();
+      loadInitialPlans();
+      connectEvents();
+    })();
   </script>
 </body>
-</html>
-`
+</html>`
 }
 
-export async function startUiServer(options: UiServerOptions = {}): Promise<UiServerInstance> {
-  const host = options.host ?? '127.0.0.1'
-  const observer = new SebEcosystemObserver()
-  const vault = new SegmentedArtifactVault({ vaultRoot: options.vaultRoot })
-  const terminalManager = new RealTerminalManager()
+export async function startUiServer(
+  options?: UiServerOptions
+): Promise<UiServerInstance> {
+  const port = options?.port ?? 4321
+  const host = options?.host ?? '127.0.0.1'
+  const autoOpenOnPlan = options?.autoOpenOnPlan ?? false
+  const openWindow = options?.openWindow ?? false
+  const openBrowser = options?.openBrowser ?? false
 
-  // Initialize automatic initial real terminal session
-  await terminalManager.createSession('shell', 'shell · deckseb', process.cwd())
+  const vault = new SegmentedArtifactVault({
+    vaultRoot: options?.vaultRoot,
+  })
 
-  // Cache or read CSS
-  const cssPath = path.join(PACKAGE_ROOT, 'src', 'styles', 'macos.css')
-  let cachedCss = ''
-  if (existsSync(cssPath)) {
+  // In-memory state: synchronized with vault
+  let memoryPlans: DetectedArtifact[] = []
+  try {
+    memoryPlans = await vault.listArtifacts({ segment: 'plans' })
+    // Also include any diagrams if present
+    const diagrams = await vault.listArtifacts({ segment: 'diagrams' })
+    memoryPlans.push(...diagrams)
+  } catch {
+    memoryPlans = []
+  }
+
+  // Sort newest first
+  memoryPlans.sort(
+    (a, b) =>
+      new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
+  )
+
+  let activePlan: DetectedArtifact | null = memoryPlans[0] || null
+  const sseClients = new Set<http.ServerResponse>()
+  let hasOpenedWindow = false
+  let actualUrl = `http://${host}:${port}`
+
+  // Function to broadcast and record plans
+  const publishPlan = async (
+    artifact: DetectedArtifact,
+    eventType: 'plan:created' | 'plan:updated' = 'plan:created'
+  ): Promise<void> => {
+    // 1. Save in vault
     try {
-      cachedCss = await readFile(cssPath, 'utf8')
+      await vault.saveArtifact(artifact)
     } catch {
-      cachedCss = '/* macos.css fallback */'
+      // Continue even if vault filesystem write encounters an issue
+    }
+
+    // 2. Update memory state
+    const existingIndex = memoryPlans.findIndex(
+      (p) => p.id === artifact.id || p.filePath === artifact.filePath
+    )
+    if (existingIndex >= 0) {
+      memoryPlans[existingIndex] = artifact
+    } else {
+      memoryPlans.unshift(artifact)
+    }
+    activePlan = artifact
+
+    // 3. Transmit via SSE to all active clients
+    const payload = JSON.stringify({ type: eventType, artifact })
+    for (const client of sseClients) {
+      try {
+        client.write(`data: ${payload}\n\n`)
+      } catch {
+        sseClients.delete(client)
+      }
+    }
+
+    // 4. Auto-open window if requested
+    if (autoOpenOnPlan && !hasOpenedWindow) {
+      hasOpenedWindow = true
+      launchStandaloneDesktopWindow(actualUrl, openBrowser)
     }
   }
 
+  // HTTP Request Handler
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', `http://${host}`)
-    const pathname = url.pathname
+    const parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host || host}`)
+    const pathname = parsedUrl.pathname
+
+    // CORS Headers
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      })
+      res.writeHead(204)
       res.end()
       return
     }
 
-    // Static Routes
-    if (pathname === '/' && req.method === 'GET') {
-      sendHtml(res, generateDeckUiHtml())
+    // 1. GET / -> Minimalist Plan Viewer HTML
+    if (req.method === 'GET' && pathname === '/') {
+      const html = generateDeckUiHtml()
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      })
+      res.end(html)
       return
     }
 
-    if (pathname === '/styles/macos.css' && req.method === 'GET') {
-      sendCss(res, cachedCss)
-      return
-    }
-
-    // Terminal Real Endpoints
-    if (pathname === '/api/terminal/sessions' && req.method === 'GET') {
+    // 2. GET /styles/macos.css -> CSS Stylesheet
+    if (req.method === 'GET' && pathname === '/styles/macos.css') {
+      const cssPath = path.join(PACKAGE_ROOT, 'src', 'styles', 'macos.css')
       try {
-        const sessions = terminalManager.listSessions()
-        sendJson(res, 200, { sessions })
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
+        const css = await readFile(cssPath, 'utf8')
+        res.writeHead(200, {
+          'Content-Type': 'text/css; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        })
+        res.end(css)
+      } catch {
+        res.writeHead(404, { 'Content-Type': 'text/plain' })
+        res.end('Stylesheet not found')
       }
       return
     }
 
-    if (pathname === '/api/terminal/create' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody<{ hostId?: string; title?: string; cwd?: string }>(req)
-        const hostId = body.hostId || 'shell'
-        const session = await terminalManager.createSession(hostId, body.title, body.cwd)
-        sendJson(res, 200, { session })
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
-      }
+    // 3. GET /api/plans -> { plans, activePlan }
+    if (req.method === 'GET' && pathname === '/api/plans') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      })
+      res.end(JSON.stringify({ plans: memoryPlans, activePlan }))
       return
     }
 
-    if (pathname === '/api/terminal/input' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody<{ sessionId: string; command: string }>(req)
-        if (!body.sessionId || typeof body.command !== 'string') {
-          sendJson(res, 400, { error: 'sessionId and command are required' })
-          return
-        }
-        const outcome = await terminalManager.executeCommand(body.sessionId, body.command, vault)
-        sendJson(res, 200, outcome)
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
-      }
+    // 4. GET /api/artifacts -> Array of plans (alias for backwards compatibility)
+    if (req.method === 'GET' && pathname === '/api/artifacts') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      })
+      res.end(JSON.stringify(memoryPlans))
       return
     }
 
-    if (pathname === '/api/terminal/kill' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody<{ sessionId: string }>(req)
-        if (!body.sessionId) {
-          sendJson(res, 400, { error: 'sessionId is required' })
-          return
-        }
-        const success = terminalManager.killSession(body.sessionId)
-        sendJson(res, 200, { success, sessionId: body.sessionId })
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
-      }
-      return
-    }
-
-    // Memoseb Context Live Endpoint
-    if (pathname === '/api/memoseb/memories' && req.method === 'GET') {
-      try {
-        let output = ''
+    // 5. POST /api/plans & POST /api/detect -> Submit/detect and publish a plan
+    if (
+      req.method === 'POST' &&
+      (pathname === '/api/plans' || pathname === '/api/detect')
+    ) {
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk
+      })
+      req.on('end', async () => {
         try {
-          output = execSync('memoseb context --max-tokens 1200', {
-            encoding: 'utf8',
-            timeout: 3500,
-          })
-        } catch {
-          output =
-            'Briefing for project deckseb — 3 memories (~450 tokens):\n  • [architecture] Arquitectura Sixzone Bento Grid\n  • [convention] TypeScript estricto y Node 22\n  • [domain] Hub de terminales y observador pasivo'
-        }
+          const json = body ? JSON.parse(body) : {}
+          let content = json.content || json.text || ''
+          const targetPath = json.filePath ? path.resolve(json.filePath) : ''
 
-        const lines = output.split('\n').filter((l) => l.trim().startsWith('•'))
-        const parsed = lines.map((line) => {
-          const match = line.match(/•\s*\[(\w+)\]\s*(.+?)(?::\s*(.*))?$/)
-          if (match) {
-            return {
-              category: match[1],
-              title: match[2],
-              content: match[3] || match[2],
+          if (!content && targetPath && existsSync(targetPath)) {
+            content = await readFile(targetPath, 'utf8')
+          }
+
+          if (!content) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'Missing content or valid filePath' }))
+            return
+          }
+
+          let detected = detectPlanInStream(
+            'ui-session',
+            'active-project',
+            content,
+            targetPath || undefined
+          )
+
+          if (!detected) {
+            // Build minimal DetectedArtifact directly if detectPlanInStream was strict
+            const mermaidBlocks = extractMermaidBlocks(content)
+            const title = json.title || 'Plan de Implementación'
+            const segment = classifyArtifactSegment(targetPath || '', content)
+            detected = {
+              id: randomUUID(),
+              sessionId: 'ui-session',
+              projectSlug: 'active-project',
+              segment,
+              title,
+              filePath: targetPath || path.join('plans', `${slugifyTitle(title)}.md`),
+              content,
+              mermaidBlocks,
+              detectedAt: new Date().toISOString(),
+              syncedToMemoseb: false,
             }
           }
-          return { category: 'architecture', title: line.replace('•', '').trim(), content: line }
-        })
 
-        sendJson(res, 200, {
-          memories: parsed,
-          rawText: output,
-          totalCount: parsed.length,
-        })
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
-      }
+          await publishPlan(detected, 'plan:created')
+
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ detected, plan: detected }))
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: msg }))
+        }
+      })
       return
     }
 
-    // Ecosystem & Vault Endpoints
-    if (pathname === '/api/snapshot' && req.method === 'GET') {
-      try {
-        const snapshot = observer.getSnapshot()
-        sendJson(res, 200, snapshot)
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
-      }
+    // 6. GET /api/events -> Server-Sent Events (SSE)
+    if (req.method === 'GET' && pathname === '/api/events') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      })
+
+      // Send initial snapshot
+      const initPayload = JSON.stringify({
+        type: 'init',
+        activePlan,
+        plans: memoryPlans,
+      })
+      res.write(`data: ${initPayload}\n\n`)
+
+      sseClients.add(res)
+      req.on('close', () => {
+        sseClients.delete(res)
+      })
       return
     }
 
-    if (pathname === '/api/artifacts' && req.method === 'GET') {
-      try {
-        const artifacts = await vault.listArtifacts()
-        sendJson(res, 200, artifacts)
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
-      }
-      return
-    }
-
-    if (pathname === '/api/detect' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody<{ text?: string; filePath?: string }>(req)
-        const text = body.text ?? ''
-        const detected = detectPlanInStream('http-session', 'active-project', text, body.filePath)
-        sendJson(res, 200, { detected })
-      } catch (err) {
-        sendJson(res, 400, { error: String(err) })
-      }
-      return
-    }
-
-    if (pathname === '/api/sync-memoseb' && req.method === 'POST') {
-      try {
-        const body = await parseJsonBody<{
-          title: string
-          content: string
-          category?: any
-          tags?: string[]
-        }>(req)
-        const art = await vault.saveArtifact({
-          id: `art-ui-${Date.now()}`,
-          sessionId: 'http-session',
-          projectSlug: 'deckseb',
-          segment: 'plans',
-          title: body.title || 'Artifact from DeckSeb UI',
-          filePath: 'plans/ui-artifact.md',
-          content: body.content || '',
-          mermaidBlocks: [],
-          detectedAt: new Date().toISOString(),
-          syncedToMemoseb: false,
-          memosebCategory: body.category || 'architecture',
-        })
-        const syncResult = await vault.syncArtifactToMemoseb(art.id, body.category || 'architecture', {
-          title: body.title,
-          tags: body.tags,
-        })
-        sendJson(res, 200, syncResult)
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
-      }
-      return
-    }
-
-    if (pathname === '/api/quota' && req.method === 'GET') {
-      try {
-        const sessionId = url.searchParams.get('sessionId') ?? 'session-agy-01'
-        const quota = computeSessionContextQuota(sessionId, [])
-        sendJson(res, 200, quota)
-      } catch (err) {
-        sendJson(res, 500, { error: String(err) })
-      }
-      return
-    }
-
-    // 404
-    sendJson(res, 404, { error: 'Not found', path: pathname })
+    // Fallback 404
+    res.writeHead(404, { 'Content-Type': 'text/plain' })
+    res.end('Not Found')
   })
 
+  // Start HTTP Server
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(options.port ?? 4321, host, () => {
+    server.listen(port, host, () => {
       resolve()
     })
   })
 
   const addr = server.address()
-  const port = typeof addr === 'object' && addr ? addr.port : (options.port ?? 4321)
-  const actualUrl = `http://${host}:${port}`
+  const actualPort =
+    typeof addr === 'object' && addr !== null ? addr.port : port
+  actualUrl = `http://${host}:${actualPort}`
 
-  const shouldLaunch = options.openWindow ?? options.openBrowser ?? false
-  if (shouldLaunch) {
-    launchStandaloneDesktopWindow(actualUrl, Boolean(options.openBrowser && !options.openWindow))
+  // Process initialPlanFile if provided
+  if (options?.initialPlanFile && existsSync(options.initialPlanFile)) {
+    try {
+      const fullPath = path.resolve(options.initialPlanFile)
+      const raw = await readFile(fullPath, 'utf8')
+      let initialArt = detectPlanInStream('cli-session', 'active-project', raw, fullPath)
+      if (!initialArt) {
+        const title = path.basename(fullPath, path.extname(fullPath))
+        initialArt = {
+          id: randomUUID(),
+          sessionId: 'cli-session',
+          projectSlug: 'active-project',
+          segment: classifyArtifactSegment(fullPath, raw),
+          title,
+          filePath: fullPath,
+          content: raw,
+          mermaidBlocks: extractMermaidBlocks(raw),
+          detectedAt: new Date().toISOString(),
+          syncedToMemoseb: false,
+        }
+      }
+      await publishPlan(initialArt, 'plan:created')
+    } catch {
+      // Continue gracefully
+    }
   }
 
-  return {
+  // Open window at startup if requested or if already have a plan
+  if (openWindow || (autoOpenOnPlan && activePlan)) {
+    hasOpenedWindow = true
+    launchStandaloneDesktopWindow(actualUrl, openBrowser)
+  }
+
+  // --- Lightweight Plan Poller (800ms) ---
+  const fileCache = new Map<string, { mtime: number; size: number }>()
+  const candidateDirs = new Set<string>()
+
+  if (options?.watchDirs && Array.isArray(options.watchDirs)) {
+    for (const d of options.watchDirs) candidateDirs.add(path.resolve(d))
+  }
+  candidateDirs.add(path.resolve(process.cwd(), 'plans'))
+  candidateDirs.add(path.resolve(process.cwd(), 'docs', 'plans'))
+  const antigravityBrain = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain')
+  if (existsSync(antigravityBrain)) {
+    candidateDirs.add(antigravityBrain)
+  }
+
+  const pollPlans = async (): Promise<void> => {
+    for (const baseDir of candidateDirs) {
+      if (!existsSync(baseDir)) continue
+
+      const scanDirectory = async (dir: string, depth = 0): Promise<void> => {
+        if (depth > 2) return
+        try {
+          const entries = readdirSync(dir, { withFileTypes: true })
+          for (const entry of entries) {
+            const full = path.join(dir, entry.name)
+            if (entry.isDirectory()) {
+              if (
+                entry.name !== 'node_modules' &&
+                entry.name !== '.git' &&
+                entry.name !== 'dist'
+              ) {
+                await scanDirectory(full, depth + 1)
+              }
+            } else if (entry.isFile() && entry.name.endsWith('.md')) {
+              try {
+                const st = statSync(full)
+                const cached = fileCache.get(full)
+                if (!cached || cached.mtime !== st.mtimeMs || cached.size !== st.size) {
+                  fileCache.set(full, { mtime: st.mtimeMs, size: st.size })
+                  const content = readFileSync(full, 'utf8')
+                  const detected = detectPlanInStream(
+                    'watcher-session',
+                    'active-project',
+                    content,
+                    full
+                  )
+                  if (detected) {
+                    await publishPlan(detected, cached ? 'plan:updated' : 'plan:created')
+                  }
+                }
+              } catch {
+                // Ignore transient file read errors during concurrent agent writes
+              }
+            }
+          }
+        } catch {
+          // Ignore directory read errors
+        }
+      }
+
+      await scanDirectory(baseDir, 0)
+    }
+  }
+
+  // Initial poll run
+  pollPlans().catch(() => {})
+  const pollTimer = setInterval(() => {
+    pollPlans().catch(() => {})
+  }, 800)
+  pollTimer.unref()
+
+  const instance: UiServerInstance = {
     server,
-    port,
+    port: actualPort,
     url: actualUrl,
+    publishPlan,
+    getPlans: () => [...memoryPlans],
+    getActivePlan: () => activePlan,
     close: async () => {
-      terminalManager.killAll()
-      await new Promise<void>((res) => server.close(() => res()))
+      clearInterval(pollTimer)
+      for (const client of sseClients) {
+        try {
+          client.end()
+        } catch {}
+      }
+      sseClients.clear()
+      await new Promise<void>((res) => {
+        server.close(() => res())
+      })
     },
   }
+
+  return instance
 }
