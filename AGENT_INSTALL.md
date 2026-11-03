@@ -1,53 +1,70 @@
-# Agent Installation Protocol (`deckseb`)
+# Protocolo de Instalación para Agentes de IA (`deckseb`)
 
-If a user asked you (an AI coding agent) to install or set up `deckseb`:
+Si un usuario solicita a un agente de codificación de IA (por ejemplo Antigravity, Claude Code o Codex) instalar, configurar o utilizar `deckseb`:
 
 > [!NOTE]
-> `deckseb` is the **100% optional** desktop mission control station, PTY terminal hub, and passive telemetry viewer for the `*seb` ecosystem ([`hubseb`](../hubseb), [`crewseb`](../crewseb), [`memoseb`](../memoseb)). All CLI tools and agent subroutines function completely without it.
+> `deckseb` es un visor de planes ultraminimalista e instantáneo con renderizado en vivo de Markdown GFM y diagramas Mermaid SVG para el ecosistema `*seb` ([`hubseb`](../hubseb), [`crewseb`](../crewseb), [`memoseb`](../memoseb)).
+> Es **100% opcional** y no bloqueante: todos los agentes, subrutinas CLI y modelos de IA continúan funcionando plenamente sin su presencia.
 
 ---
 
-## Option A: Run directly with npx or install via npm (Recommended)
+## 🏛️ Arquitectura del Visor
+
+El flujo de procesamiento opera de manera puramente reactiva y no intrusiva:
+
+```mermaid
+flowchart LR
+    Watcher["PlanWatcher\n(Vigila brain y plans/)"] --> Detector["PlanDetector\n(Léxico + Mermaid)"]
+    Detector --> Vault["SegmentedVault\n(.seb-vault/ local)"]
+    Vault --> Server["Minimal HTTP + SSE Server\n(Puerto :4321)"]
+    Server --> Viewer["Editorial Plan Viewer\n(Ventana macOS / Web)"]
+```
+
+En cuanto el agente crea o actualiza un archivo de plan (`implementation_plan.md`, `plans/*.md`, artefactos en `.gemini/antigravity-cli/brain/` o `.seb-vault/`), `deckseb` abre o actualiza automáticamente la ventana editorial con soporte completo para alertas GitHub, tablas y diagramas Mermaid.
+
+---
+
+## Opción A: Ejecución Directa o Instalación Rápida vía npm (Recomendada)
 
 ```sh
-# Run instant UI without local build:
-npx deckseb ui
+# Ejecutar directamente sin compilar ni instalar localmente:
+npx deckseb watch
 
-# Or install globally:
+# O instalar de manera global en el entorno:
 npm install -g deckseb
 deckseb setup
 ```
 
 ---
 
-## Option B: Install from Source (Local Development)
+## Opción B: Instalación desde Código Fuente (Desarrollo Local)
 
-### 1. Ensure `hubseb` is built first
-If `../hubseb` exists locally, ensure it is built:
+### 1. Construir `hubseb` previamente (si existe localmente)
+Si la carpeta adyacente `../hubseb` está presente, compilarla:
 ```sh
 cd ../hubseb && npm install && npm run build && cd ../deckseb
 ```
 
-### 2. Install dependencies, compile TypeScript, and run test suite
+### 2. Instalar dependencias y compilar el paquete CLI
 ```sh
 npm install
 npm run build
 npm test
 ```
 
-### 3. Verify native Rust backend test suite
+### 3. Verificar la suite de pruebas del backend nativo (Rust)
 ```sh
-cd src-tauri && cargo test && cd ..
+(cd src-tauri && cargo test)
 ```
 
-### 4. Link CLI and register `deckseb` in `hubseb` topology
+### 4. Enlazar el binario CLI y registrar en la topología de `hubseb`
 ```sh
 chmod +x dist/cli/deckseb.js
 ln -sf "$(pwd)/dist/cli/deckseb.js" ~/.local/bin/deckseb
 deckseb setup
 ```
 
-### 5. Verify Ecosystem Status and Connection with `hubseb`
+### 5. Verificar el estado del visor y el ecosistema
 ```sh
 deckseb status
 hubseb ls
@@ -56,19 +73,41 @@ hubseb doctor
 
 ---
 
-## Complete Verification Suite
+## ⌨️ Comandos CLI Disponibles
 
-To verify full health across frontend, integration bridges, and native Rust backend:
+| Comando | Acción |
+|---|---|
+| `deckseb` / `deckseb watch` / `deckseb ui` | Inicia el visor reactivo en segundo plano (`:4321`), vigilando planes y emitiendo actualizaciones vía SSE. |
+| `deckseb <archivo.md>` / `deckseb show <archivo.md>` | Abre de forma inmediata el plan especificado en la ventana editorial. |
+| `deckseb detect <archivo.md> [--json]` | Analiza un archivo Markdown y extrae la clasificación del segmento y bloques Mermaid. |
+| `deckseb status [--json]` | Informa sobre el estado del servidor, cantidad de planes y registro en la topología. |
+| `deckseb setup` | Registra `deckseb` como nodo hoja (`ui.deck`, `artifacts.organizer`) en `~/.config/hubseb/topology.json`. |
+| `deckseb purge` | Remueve `deckseb` de la topología sin alterar los demás paquetes del ecosistema. |
+
+---
+
+## 🧪 Suite de Verificación Completa
+
+Para garantizar que el código compila limpiamente y todas las pruebas pasan sin regresiones:
 
 ```sh
-npm run typecheck && npm test && (cd src-tauri && cargo test)
+npm run typecheck
+npm test
+npm run build
+(cd src-tauri && cargo test)
+```
+
+O en una sola orden encadenada:
+
+```sh
+npm run typecheck && npm test && npm run build && (cd src-tauri && cargo test)
 ```
 
 ---
 
-## (Optional) Disconnect / Unlink
+## Desconexión / Purga Limpia (Opcional)
 
-Because `deckseb` is a non-blocking leaf node (`ui.deck`), you can disconnect it from `hubseb` at any time without affecting any other tools:
+Dado que `deckseb` es un nodo observador no intrusivo (`ui.deck`), puede desvincularse de la topología en cualquier momento sin afectar la ejecución de ningún agente:
 
 ```sh
 deckseb purge

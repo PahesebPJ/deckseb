@@ -1,245 +1,194 @@
 # deckseb
 
-Estación de control de escritorio (**100% opcional**), hub de terminales PTY y visor pasivo de telemetría para el ecosistema `*seb` ([**hubseb**](https://github.com/PahesebPJ/hubseb), [**crewseb**](https://github.com/PahesebPJ/crewseb), [**memoseb**](https://github.com/PahesebPJ/memoseb)).
+Visor editorial de planes ultraminimalista e instantáneo con renderizado reactivo de Markdown GFM y diagramas Mermaid para el ecosistema `*seb` ([**hubseb**](https://github.com/PahesebPJ/hubseb), [**crewseb**](https://github.com/PahesebPJ/crewseb), [**memoseb**](https://github.com/PahesebPJ/memoseb)).
 
-Desarrollada sobre **Tauri v2 + React 18 + TypeScript**, con soporte multiplataforma (Linux, macOS, Windows) y un diseño nativo pulido con estética **macOS Sequoia** en **Modo Claro** y **Modo Oscuro**.
-
----
-
-## 💡 Filosofía: 100% Opcional y Modo Pasivo
-
-`deckseb` fue concebido bajo el principio de **cero acoplamiento obligatorio**:
-
-- **Autonomía Total del CLI:** [**hubseb**](https://github.com/PahesebPJ/hubseb), [**crewseb**](https://github.com/PahesebPJ/crewseb) y [**memoseb**](https://github.com/PahesebPJ/memoseb) operan de forma 100% autónoma en cualquier consola o entorno headless sin requerir `deckseb`.
-- **Cero Mutaciones en Repositorios Adyacentes:** `deckseb` funciona en modo de solo lectura sobre las configuraciones del sistema y los logs de transcripción de los agentes. Solo escribe en su propia bóveda de artefactos local (`.seb-vault/`) o en `topology.json` si se invoca explícitamente `deckseb setup`.
-- **Nodo Hoja Desacoplable:** En la topología de `hubseb`, `deckseb` se registra opcionalmente como un nodo hoja observador (`ui.deck`, `artifacts.organizer`). Si se desinstala o purga (`deckseb purge`), el resto del ecosistema continúa ejecutándose sin notar su ausencia.
+Desarrollado en **TypeScript** con arquitectura nativa ultraligera, servidor HTTP + SSE integrado (puerto por defecto `4321`) y soporte multiplataforma (Linux, macOS, Windows) bajo una estética editorial inspirada en **macOS Sequoia** con soporte para **Modo Claro** y **Modo Oscuro**.
 
 ---
 
-## 🏛️ Arquitectura
+## 💡 Concepto y Filosofía
 
-`deckseb` combina un frontend reactivo con un backend nativo en Rust a través de los canales IPC asíncronos de Tauri v2:
+`deckseb` transforma radicalmente la supervisión de planes creados por modelos de IA y agentes de desarrollo:
+
+- **Apertura y Actualización Instantánea:** En cuanto el modelo o subagente crea o actualiza un plan de implementación (`implementation_plan.md`, `plans/*.md`, `.seb-vault/` o archivos de sesión en Antigravity CLI brain), `deckseb` detecta la mutación en milisegundos y abre o actualiza automáticamente una ventana editorial con el plan renderizado con máxima legibilidad tipográfica.
+- **Renderizado GFM y Mermaid Puro:** Sin dependencias externas pesadas, compila al vuelo:
+  - **Markdown GitHub Flavored (GFM):** encabezados, listas numeradas, listas de tareas interactivas (`- [x]`, `- [ ]`), citas en bloque y bloques de código con botón de copiado en un clic.
+  - **Alertas Estilo GitHub:** Bloques destacados con íconos vectoriales para `> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]` y `> [!CAUTION]`.
+  - **Tablas de Tareas y Matrices:** Tablas Markdown estilizadas ideales para matrices de despacho de agentes y divisiones de trabajo.
+  - **Diagramas de Flujo Mermaid en SVG Nativo:** Motor de renderizado vectorial estratificado (Sugiyama) que genera diagramas de flujo interactivos (`flowchart TD`, `flowchart LR`, `graph`) en SVG puro con conmutador para ver u ocultar el código fuente Mermaid.
+- **100% Opcional y Modo Pasivo:** Cero acoplamiento forzado. Si `deckseb` no está en ejecución, los agentes y herramientas CLI ([**hubseb**](https://github.com/PahesebPJ/hubseb), [**crewseb**](https://github.com/PahesebPJ/crewseb), [**memoseb**](https://github.com/PahesebPJ/memoseb)) operan con total normalidad.
+- **Cero Mutaciones Indeseadas:** Funciona en modo estrictamente observador sobre los proyectos y las transcripciones de los agentes. Solo escribe en su propia bóveda local (`.seb-vault/`) o en `topology.json` al invocar explícitamente `deckseb setup`.
+
+---
+
+## 🏛️ Arquitectura Minimalista
+
+El flujo de procesamiento de `deckseb` opera en una tubería reactiva unidireccional desacoplada:
 
 ```mermaid
-flowchart TB
-    subgraph UI ["Frontend (React 18 + TypeScript)"]
-        Shell["MacShell (macOS Sequoia UI)"]
-        TermView["TerminalViewport (Tabs por Agente)"]
-        Drawer["PlanDrawer (Mermaid + Markdown Viewer)"]
-        CrewPanel["CrewMonitorPanel (10 Especialistas)"]
-        MemoPanel["MemoMonitorPanel (Telemetría de Memoria)"]
-        QuotaBar["ContextQuotaBar (Ventana de Tokens)"]
-    end
-
-    subgraph IPC ["Tauri v2 IPC Bridge"]
-        Cmds["Comandos (deck:terminal_*, deck:artifacts_*, deck:session_quota)"]
-        Events["Eventos (deck:artifact-detected, deck:quota-updated, deck:memo-event)"]
-    end
-
-    subgraph RustBackend ["Backend Nativo (Rust - src-tauri)"]
-        PTYMgr["TerminalManager (PTY & Process Spawner)"]
-        Router["IPCRouter & Command Handlers"]
-    end
-
-    subgraph CoreEngine ["Motor Core (TypeScript)"]
-        Observer["SebEcosystemObserver (hubseb / topology.json)"]
-        Detector["PlanDetector (Extracción Mermaid + Heurísticas)"]
-        Vault[".seb-vault/ (Segmented Vault Organizer)"]
-        StreamMon["TranscriptMonitor (JSONL & Tool Calls)"]
-    end
-
-    subgraph Ecosystem ["Ecosistema *seb & Hosts Externos"]
-        Hosts["Agentes: antigravity | claude | codex | opencode | herdr | shell"]
-        Hub["hubseb (topology.json)"]
-        Crew["crewseb (10 Subagentes)"]
-        Memo["memoseb (vault.sqlite + FTS5)"]
-    end
-
-    Shell --> TermView & Drawer & CrewPanel & MemoPanel & QuotaBar
-    UI <-->|IPC Invokes & Listeners| IPC
-    IPC <--> Router
-    Router <--> PTYMgr
-    PTYMgr <--> Hosts
-    CoreEngine --> Observer & Detector & Vault & StreamMon
-    Observer -.-> Hub & Crew & Memo
-    Detector --> Vault
-    Vault -.->|Sync 1-clic| Memo
+flowchart LR
+    Watcher["PlanWatcher\n(fs.watch + Polling)"] --> Detector["PlanDetector\n(Léxico + Mermaid)"]
+    Detector --> Vault["SegmentedVault\n(.seb-vault/ storage)"]
+    Vault --> Server["Minimal HTTP + SSE Server\n(Port :4321 / SSE stream)"]
+    Server --> Viewer["Editorial Plan Viewer\n(macOS Window / Browser)"]
 ```
 
-### Componentes de la Arquitectura
+### Componentes del Sistema
 
-1. **Terminal Hub Multisesión (`TerminalManager` / `TerminalViewport`):**
-   Permite lanzar e interactuar simultáneamente con terminales dedicadas a los 6 entornos compatibles:
-   - `antigravity` (`agy`)
-   - `claude` (Claude Code)
-   - `codex` (Codex CLI)
-   - `opencode` (OpenCode CLI)
-   - `herdr` (Herdr orchestrator)
-   - `shell` (Bash / Zsh estándar)
-2. **Detector de Artefactos y Drawer Interactivo (`PlanDetector` / `PlanDrawer`):**
-   Monitorea en tiempo real el flujo de las sesiones. Al detectar planes de implementación, criterios de aceptación o bloques de código `mermaid`, despliega automáticamente el panel lateral (`PlanDrawer`) para renderizar y navegar los diagramas visualmente sin interferir con la terminal.
-3. **Bóveda Segmentada Local (`.seb-vault/`):**
-   Clasifica los artefactos detectados en 5 categorías persistentes (`plans`, `diagrams`, `specs`, `reviews`, `post-mortems`), extrayendo diagramas individuales a archivos `.mmd`.
-4. **Sincronización en 1 Clic con `memoseb`:**
-   Permite enviar cualquier plan, decisión o arquitectura descubierta directamente a la bóveda vectorial/FTS5 de `memoseb` mediante `memoseb remember`.
-5. **Observador Pasivo de Ecosistema (`SebEcosystemObserver`):**
-   Lee las configuraciones de `~/.config/hubseb/topology.json`, perfiles de modelos (`crewseb-models.json`), identidades aleatorias (`crewseb-personas.json`) y métricas de `memoseb` (`vault.sqlite`), reflejando el estado en vivo de la tripulación y la GPU.
-6. **Medidor de Cuota y Ventana de Contexto (`ContextQuotaBar`):**
-   Calcula en tiempo real los tokens de entrada/salida y el porcentaje restante de la ventana de contexto de cada sesión activa, alertando ante riesgos de saturación (`healthy`, `warning`, `critical`).
+1. **`PlanWatcher` (`src/core/plan-watcher.ts`):**
+   Observador reactivo en tiempo real que vigila rutas del cerebro de agentes (`~/.gemini/antigravity-cli/brain/`), directorios de proyectos (`plans/`, `docs/plans/`), bóvedas (`.seb-vault/`) y archivos explícitos pasados por parámetro. Detecta eventos `plan:created`, `plan:updated` y `plan:deleted`.
+2. **`PlanDetector` (`src/core/plan-detector.ts`):**
+   Motor de inspección léxica que clasifica segmentos (`plans`, `diagrams`, `specs`, `reviews`, `post-mortems`), analiza encabezados de planes de implementación y extrae bloques sintácticos de diagramas Mermaid (` ```mermaid `).
+3. **`SegmentedArtifactVault` (`src/core/segmented-vault.ts`):**
+   Almacén estructurado local que cataloga y archiva versiones de planes en `.seb-vault/<proyecto>/`, exportando diagramas individuales a archivos `.mmd` y manteniendo un manifiesto sincronizable con la bóveda de memoria de `memoseb`.
+4. **`Minimal HTTP + SSE Server` (`src/cli/ui-server.ts`):**
+   Servidor HTTP ligero basado exclusivamente en la biblioteca estándar de Node.js (`node:http`), sin dependencias infladas. Expone la API REST (`/api/plans`), sirve los activos editoriales y mantiene un canal persistente de **Server-Sent Events** (`/api/events`) para propagar cambios en tiempo real sin recargar la página.
+5. **`Editorial Plan Viewer` (`src/cli/ui-server.ts`):**
+   Interfaz editorial con tipografía de alta jerarquía y botones de control macOS Sequoia, capaz de lanzarse en modo aplicación de ventana flotante dedicada (`--app=http://127.0.0.1:4321` con Chromium, Google Chrome, Brave o Edge) o en el navegador predeterminado del sistema.
 
 ---
 
 ## 📁 Bóveda de Artefactos Segmentada (`.seb-vault/`)
 
-Cuando un agente o desarrollador genera un plan o documento de diseño, `deckseb` lo detecta mediante análisis léxico y de ruta (`classifyArtifactSegment`) y lo archiva automáticamente en el directorio raíz del proyecto:
+Cuando se detecta o envía un plan, `deckseb` lo clasifica y organiza automáticamente dentro de la estructura segmentada del proyecto:
 
 ```
 .seb-vault/
-└── <project-slug>/
-    ├── manifest.json              # Metadatos, marcas de tiempo y sincronización con memoseb
+└── <slug-del-proyecto>/
+    ├── manifest.json              # Metadatos, marcas de tiempo y estado de sincronización
     ├── plans/                     # Planes de implementación, roadmaps y matrices de despacho
-    │   └── 2026-11-01-initial-architecture.md
+    │   └── 2026-11-02-auth-rotation-plan.md
     ├── diagrams/                  # Diagramas Mermaid (.mmd) extraídos automáticamente
-    │   ├── 2026-11-01-initial-architecture-diagram-1.mmd
-    │   └── 2026-11-01-initial-architecture-diagram-2.mmd
-    ├── specs/                     # Especificaciones técnicas, BDD, Given/When/Then
-    │   └── authentication-spec.md
+    │   └── 2026-11-02-auth-rotation-plan-diagram-1.mmd
+    ├── specs/                     # Especificaciones funcionales y escenarios BDD
+    │   └── token-refresh-spec.md
     ├── reviews/                   # Reportes de code review y auditorías de seguridad
-    │   └── pr-42-security-review.md
+    │   └── security-audit-tokens.md
     └── post-mortems/              # Análisis de causa raíz (RCA) y revisiones de incidentes
-        └── incident-2026-11-db-lock.md
+        └── incident-token-expiry.md
 ```
 
 ### Segmentos de Clasificación Automática
 
-| Segmento | Patrones en Rutas | Palabras Clave y Encabezados |
-|---|---|---|
-| `plans` | `plan`, `roadmap` | `# Implementation Plan`, `Plan de Implementación`, matrices de despacho |
-| `diagrams` | `diagram`, `.mmd` | Bloques ` ```mermaid `, `graph TD`, `sequenceDiagram`, `flowchart` |
-| `specs` | `spec`, `bdd`, `.feature` | `Scenario:`, `Given/When/Then`, `# Technical Specification` |
-| `reviews` | `review`, `audit` | `# Code Review`, `# Security Audit`, auditorías de diff |
-| `post-mortems` | `post-mortem`, `postmortem`, `rca` | `# Root Cause Analysis`, `# Incident Post-Mortem` |
-
----
-
-## 🖥️ Experiencia de Usuario macOS Sequoia
-
-`deckseb` incorpora una interfaz de usuario inspirada en el lenguaje de diseño de **macOS Sequoia**:
-- **Ventana con Semáforo Nativo:** Botones de control (Cerrar, Minimizar, Expandir) integrados en la barra de herramientas.
-- **Soporte Dinámico de Temas:** Conmutación instantánea entre **Modo Oscuro** (paleta obsidian/grafito profundo) y **Modo Claro** (vidrio translúcido y grises neutros de alto contraste).
-- **Inspector Lateral Multifunción:** Pestañas superiores para alternar rápidamente entre:
-  - 📋 **Planes & Diagramas:** Visualizador de Markdown y renderizador interactivo Mermaid.
-  - 👥 **Tripulación (`crewseb`):** Estado de los 10 especialistas (`researcher`, `analyst`, `architect`, `developer`, `qa-automation`, `devops`, `sre`, `security`, `code-reviewer`, `documenter`), sus nombres propios aleatorios, worktrees activos y niveles de razonamiento (`fast`, `balanced`, `deep`).
-  - 🧠 **Memoria (`memoseb`):** Monitor de eventos de memoria en vivo y conteo global de recuerdos indexados.
+| Segmento | Patrones en Rutas | Indicadores de Contenido | Categoría en memoseb |
+|---|---|---|---|
+| `plans` | `plan`, `roadmap` | `# Implementation Plan`, `Plan de Implementación`, matrices de tareas | `architecture` |
+| `diagrams` | `diagram`, `.mmd` | Bloques ` ```mermaid `, `flowchart`, `graph`, `sequenceDiagram` | `architecture` |
+| `specs` | `spec`, `bdd`, `.feature` | `Scenario:`, `Given/When/Then`, `# Technical Specification` | `domain` |
+| `reviews` | `review`, `audit` | `# Code Review`, `# Security Audit`, checklist de revisión | `decision` |
+| `post-mortems` | `post-mortem`, `postmortem`, `rca` | `# Root Cause Analysis`, `# Incident Post-Mortem` | `bugfix` |
 
 ---
 
 ## 🚀 Instalación y Puesta en Marcha
 
-### Instalación Rápida vía npm (Recomendado)
+### Opción 1: Ejecución Instantánea sin Instalación Previa (`npx`)
+
+Puedes lanzar el visor de inmediato en cualquier consola:
+
+```sh
+# Iniciar visor en modo vigilancia (espera la creación de planes y abre ventana automáticamente)
+npx deckseb watch
+
+# O abrir un archivo de plan específico de inmediato
+npx deckseb show implementation_plan.md
+```
+
+### Opción 2: Instalación Global vía npm
 
 ```sh
 npm install -g deckseb
+
+# Opcional: registrar en la topología de hubseb como nodo de visualización
 deckseb setup
 ```
 
-### Instalación desde Código Fuente (Desarrollo Local)
+### Opción 3: Compilación desde Código Fuente (Desarrollo Local)
 
 ```sh
-# Clonar repositorio
-### Instalación Instantánea (Recomendada con `npx` / `npm`)
-
-Cualquier usuario puede lanzar la interfaz gráfica macOS Sequoia **al instante sin compilar Rust**:
-
-```sh
-# Ejecución directa sin instalación previa:
-npx deckseb ui
-
-# O instalación global:
-npm install -g deckseb
-deckseb ui
-```
-
-Esto abrirá la consola de misión en `http://127.0.0.1:4321` conectada en vivo con tu terminal y ecosistema local.
-
-### Instalación desde Código Fuente (Desarrollo y Binario Nativo Tauri)
-
-```sh
+# 1. Clonar repositorio
 git clone https://github.com/PahesebPJ/deckseb.git
 cd deckseb
 
-# Instalar dependencias y compilar CLI
+# 2. Instalar dependencias y compilar CLI
 npm install
 npm run build
 
-# Enlazar binario local
+# 3. Enlazar binario local a tu PATH
 chmod +x dist/cli/deckseb.js
 ln -sf "$(pwd)/dist/cli/deckseb.js" ~/.local/bin/deckseb
 
-# Registrar nodo en hubseb (opcional)
+# 4. Registrar en hubseb (opcional)
 deckseb setup
-```
-
-### Ejecución en Modo Aplicación de Escritorio
-
-Para iniciar la aplicación de escritorio en modo desarrollo con recarga en caliente:
-
-```sh
-npm run tauri dev
-```
-
-O compilar el paquete ejecutable nativo para tu sistema operativo:
-
-```sh
-npm run tauri build
 ```
 
 ---
 
 ## ⌨️ Referencia de Comandos CLI
 
-El ejecutable `deckseb` provee herramientas de diagnóstico, integración con `hubseb` y detección local de artefactos:
+El comando `deckseb` provee las siguientes operaciones:
+
+| Comando | Descripción |
+|---|---|
+| `deckseb` / `deckseb watch` / `deckseb ui` | Inicia el visor en segundo plano en `http://127.0.0.1:4321`. En cuanto un modelo cree o actualice un plan (`*plan*.md`), abre la ventana editorial y transmite cambios vía SSE. Opciones: `--port <número>`, `--open`, `--browser`. |
+| `deckseb <archivo.md>` / `deckseb show <archivo.md>` | Abre de inmediato el archivo de plan especificado en la ventana editorial (reutiliza el servidor si ya está activo o inicia una nueva instancia). |
+| `deckseb detect <archivo.md>` | Inspecciona un documento Markdown, clasifica su segmento y reporta el conteo de bloques Mermaid y metadatos (`--json` para salida estructurada). |
+| `deckseb status` | Muestra el estado del visor, puerto activo, cantidad de planes cargados en memoria y registro en `hubseb topology.json` (`--json` soportado). |
+| `deckseb setup` | Registra `deckseb` en `topology.json` de `hubseb` como nodo hoja observador (`ui.deck`, `artifacts.organizer`). |
+| `deckseb purge` | Elimina limpiamente el registro de `deckseb` de la topología de `hubseb`. |
+| `deckseb --version` / `-v` | Muestra la versión instalada de `deckseb`. |
+| `deckseb --help` / `-h` | Muestra la ayuda interactiva de comandos en consola. |
+
+### Ejemplos de Uso Frecuente
 
 ```sh
-deckseb ui [--port 4321]   # Lanza la consola gráfica macOS Sequoia en navegador o ventana dedicada
-deckseb status [--json]    # Inspecciona el estado del ecosistema *seb, topología y subagentes
-deckseb setup              # Registra deckseb como nodo hoja (ui.deck) en hubseb topology.json
-deckseb purge              # Elimina deckseb de topology.json limpiamente
-deckseb detect <archivo>   # Analiza un archivo Markdown y extrae planes y diagramas Mermaid
-deckseb --version          # Muestra la versión instalada
-deckseb --help             # Despliega la ayuda del comando
+# 1. Vigilar el espacio de trabajo mientras un modelo de IA escribe:
+deckseb watch
+
+# 2. Abrir un plan de implementación generado recientemente en ventana estilo app:
+deckseb show plans/auth-migration.md
+
+# 3. Abrir forzando navegador tradicional en un puerto específico:
+deckseb show implementation_plan.md --port 5050 --browser
+
+# 4. Inspeccionar la clasificación y bloques Mermaid sin abrir ventana:
+deckseb detect plans/architecture.md --json
+
+# 5. Comprobar si el servidor está activo y consultando topología:
+deckseb status
 ```
 
-### Resumen de Nodos y Capacidades en `topology.json`
+---
 
-Al ejecutar `deckseb setup`, se registra la siguiente tarjeta de capacidad en `~/.config/hubseb/topology.json`:
+## 🖥️ Experiencia Editorial macOS Sequoia
 
-| Propiedad | Valor |
-|---|---|
-| **ID del Nodo** | `deckseb` |
-| **Provides** | `ui.deck`, `artifacts.organizer` |
-| **Consumes** | `memory.vault`, `crew.specialists`, `crew.models` |
-| **Signals** | `deck.launched`, `artifact.detected` |
-| **Tipo de Nodo** | Hoja pasiva (Leaf Node) |
+El visor editorial de `deckseb` ofrece:
+- **Semáforo y Estética Nativa:** Controles discretos, paleta adaptada y bordes sutiles inspirados en el diseño de macOS Sequoia.
+- **Alternancia de Modo Claro y Modo Oscuro:** Botón superior para alternar instantáneamente entre tema oscuro obsidian de alto contraste y tema claro papel editorial, con persistencia local en `localStorage`.
+- **Selector de Planes Múltiples:** Menú desplegable que permite alternar entre todos los planes detectados en la sesión actual o en la bóveda.
+- **Indicador de Conexión en Vivo:** Señal visual en verde (`En vivo`) que confirma la recepción continua de actualizaciones mediante Server-Sent Events.
 
 ---
 
 ## 🧪 Verificación y Suite de Pruebas
 
-Para validar la integridad de la aplicación (frontend TypeScript, suite de integración y backend en Rust), ejecuta:
+Para comprobar la integridad completa del sistema, TypeScript, suite de tests y componentes nativos:
 
 ```sh
-# Verificación de tipos TypeScript
+# 1. Comprobación de tipos estáticos TypeScript
 npm run typecheck
 
-# Suite de pruebas TypeScript (Node.js Test Runner)
+# 2. Ejecución de la suite completa de pruebas unitarias y e2e
 npm test
 
-# Suite de pruebas de la librería nativa Rust
+# 3. Compilación limpia del CLI y distribución
+npm run build
+
+# 4. Pruebas del backend nativo Tauri en Rust (si se compila el ejecutable nativo)
 (cd src-tauri && cargo test)
 
-# Verificación completa combinada
-npm run typecheck && npm test && (cd src-tauri && cargo test)
+# 5. Verificación integrada en una sola línea
+npm run typecheck && npm test && npm run build && (cd src-tauri && cargo test)
 ```
 
 ---

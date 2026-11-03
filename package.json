@@ -1,7 +1,7 @@
 {
   "name": "deckseb",
   "version": "0.1.0",
-  "description": "Desktop mission control, PTY terminal hub, and passive telemetry viewer for *seb ecosystem",
+  "description": "Minimalist instant plan viewer with live Markdown GFM & Mermaid rendering for *seb ecosystem",
   "license": "MIT",
   "author": "PahesebPJ",
   "homepage": "https://github.com/PahesebPJ/deckseb#readme",
