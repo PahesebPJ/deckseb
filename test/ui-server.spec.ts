@@ -1,14 +1,24 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { startUiServer, type UiServerInstance } from '../src/cli/ui-server.ts'
 
-describe('ui-server HTTP API & Sixzone Bento view', () => {
+describe('ui-server HTTP API & Minimalist Plan Viewer', () => {
   let serverInstance: UiServerInstance
   let baseUrl: string
+  let tempDir: string
 
   before(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'deckseb-test-'))
     // Port 0 lets the OS pick an available ephemeral port
-    serverInstance = await startUiServer({ port: 0, openBrowser: false })
+    serverInstance = await startUiServer({
+      port: 0,
+      openBrowser: false,
+      openWindow: false,
+      vaultRoot: path.join(tempDir, 'vault'),
+    })
     baseUrl = serverInstance.url
   })
 
@@ -16,37 +26,35 @@ describe('ui-server HTTP API & Sixzone Bento view', () => {
     if (serverInstance) {
       await serverInstance.close()
     }
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    }
   })
 
-  it('serves the Sixzone Bento Mission Control HTML on GET /', async () => {
+  it('serves the Minimalist Plan Viewer HTML on GET /', async () => {
     const res = await fetch(`${baseUrl}/`)
     assert.equal(res.status, 200)
     assert.match(res.headers.get('content-type') ?? '', /text\/html/)
     const html = await res.text()
-    assert.match(html, /deckseb v0\.1\.0 — Mission Control/)
-    assert.match(html, /bento-shell/)
-    assert.match(html, /traffic-lights/)
-    assert.match(html, /id="leftSidebar"/)
-    assert.match(html, /terminal-container/)
-    assert.match(html, /mac-inspector/)
 
-    // Confirm all top bar buttons
-    assert.match(html, /id="simulatePlanBtn"/, 'top bar button simulatePlanBtn must exist')
-    assert.match(html, /id="topTabPlan"/, 'top bar button topTabPlan must exist')
-    assert.match(html, /id="topTabCrew"/, 'top bar button topTabCrew must exist')
-    assert.match(html, /id="topTabMemo"/, 'top bar button topTabMemo must exist')
-    assert.match(html, /id="topTabVault"/, 'top bar button topTabVault must exist')
-    assert.match(html, /id="themeToggleBtn"/, 'top bar button themeToggleBtn must exist')
-    assert.match(html, /id="toggleInspectorBtn"/, 'top bar button toggleInspectorBtn must exist')
+    assert.match(html, /deckseb — Visor Editorial de Planes/)
+    assert.match(html, /class="plan-shell"/)
+    assert.match(html, /class="traffic-lights"/)
+    assert.match(html, /id="liveIndicator"/)
+    assert.match(html, /id="planSelector"/)
+    assert.match(html, /id="themeToggleBtn"/)
+    assert.match(html, /id="emptyState"/)
+    assert.match(html, /id="planView"/)
+    assert.match(html, /id="planTitle"/)
+    assert.match(html, /id="planPath"/)
+    assert.match(html, /id="planTimestamp"/)
+    assert.match(html, /id="planContent"/)
 
-    // Confirm all inspector tabs
-    assert.match(html, /data-tab="plan"/, 'inspector tab plan must exist')
-    assert.match(html, /data-tab="crew"/, 'inspector tab crew must exist')
-    assert.match(html, /data-tab="memo"/, 'inspector tab memo must exist')
-    assert.match(html, /data-tab="vault"/, 'inspector tab vault must exist')
-
-    // Confirm ZERO occurrences of fake mock "Ejecutado:"
-    assert.ok(!html.includes('Ejecutado:'), 'HTML must have zero occurrences of fake mock "Ejecutado:"')
+    // Confirm pure JS GFM and Mermaid renderer elements exist in script
+    assert.match(html, /renderMarkdown/)
+    assert.match(html, /renderMermaidSvg/)
+    assert.match(html, /gh-alert/)
+    assert.match(html, /plan-table/)
   })
 
   it('serves the macos.css stylesheet on GET /styles/macos.css', async () => {
@@ -54,191 +62,118 @@ describe('ui-server HTTP API & Sixzone Bento view', () => {
     assert.equal(res.status, 200)
     assert.match(res.headers.get('content-type') ?? '', /text\/css/)
     const css = await res.text()
-    assert.ok(css.length > 100)
-    assert.match(css, /--bento-bg-root/)
-    assert.match(css, /--bento-surface/)
+    assert.ok(css.length > 200)
+    assert.match(css, /\[data-theme="dark"\]/)
+    assert.match(css, /#090d12/)
+    assert.match(css, /#0f151d/)
+    assert.match(css, /\[data-theme="light"\]/)
+    assert.match(css, /#f8fafc/)
+    assert.match(css, /#ffffff/)
+    assert.match(css, /\.plan-reader/)
+    assert.match(css, /\.plan-article/)
+    assert.match(css, /\.plan-table/)
+    assert.match(css, /\.gh-alert/)
+    assert.match(css, /\.mermaid-card/)
   })
 
-  it('lists active sessions including initial session on GET /api/terminal/sessions', async () => {
-    const res = await fetch(`${baseUrl}/api/terminal/sessions`)
+  it('returns empty plans state initially on GET /api/plans', async () => {
+    const res = await fetch(`${baseUrl}/api/plans`)
     assert.equal(res.status, 200)
     const data = await res.json()
-    assert.ok(Array.isArray(data.sessions))
-    assert.ok(data.sessions.length >= 1)
-    const initial = data.sessions[0]
-    assert.ok(initial.id)
-    assert.equal(initial.hostId, 'shell')
-    assert.equal(typeof initial.pid, 'number')
-    assert.ok(initial.pid > 0)
-    assert.equal(initial.status, 'running')
-    assert.ok(Array.isArray(initial.lines))
+    assert.ok(Array.isArray(data.plans))
   })
 
-  it('creates a real terminal session with numeric pid on POST /api/terminal/create', async () => {
-    const res = await fetch(`${baseUrl}/api/terminal/create`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hostId: 'antigravity', title: 'antigravity · test' }),
-    })
-    assert.equal(res.status, 200)
-    const data = await res.json()
-    assert.ok(data.session)
-    assert.equal(data.session.hostId, 'antigravity')
-    assert.equal(typeof data.session.pid, 'number')
-    assert.ok(data.session.pid > 0)
-    assert.equal(data.session.status, 'running')
-    assert.ok(Array.isArray(data.session.lines))
-  })
-
-  it('executes real command echo "hello-sixzone" on POST /api/terminal/input', async () => {
-    // 1. Create a dedicated session
-    const createRes = await fetch(`${baseUrl}/api/terminal/create`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hostId: 'shell', title: 'Exec Test Session' }),
-    })
-    const createData = await createRes.json()
-    const sessionId = createData.session.id
-
-    // 2. Execute real echo command
-    const res = await fetch(`${baseUrl}/api/terminal/input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId,
-        command: 'echo "hello-sixzone"',
-      }),
-    })
-    assert.equal(res.status, 200)
-    const data = await res.json()
-    assert.equal(data.success, true)
-    assert.match(data.stdout, /hello-sixzone/)
-    const hasLine = data.lines.some((l: string) => l.includes('hello-sixzone'))
-    assert.ok(hasLine, 'session output lines should contain hello-sixzone')
-    assert.ok(!data.stdout.includes('Ejecutado:'), 'stdout must not contain fake mock "Ejecutado:"')
-    assert.ok(!data.lines.some((l: string) => l.includes('Ejecutado:')), 'lines must not contain fake mock "Ejecutado:"')
-  })
-
-  it('handles /plan command and returns detectedArtifact on POST /api/terminal/input', async () => {
-    const listRes = await fetch(`${baseUrl}/api/terminal/sessions`)
-    const listData = await listRes.json()
-    const sessionId = listData.sessions[0].id
-
-    const res = await fetch(`${baseUrl}/api/terminal/input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, command: '/plan' }),
-    })
-    assert.equal(res.status, 200)
-    const data = await res.json()
-    assert.equal(data.success, true)
-    assert.ok(data.detectedArtifact)
-    assert.ok(data.detectedArtifact.title)
-    assert.ok(Array.isArray(data.detectedArtifact.mermaidBlocks))
-  })
-
-  it('handles /compact command and updates token quota on POST /api/terminal/input', async () => {
-    const listRes = await fetch(`${baseUrl}/api/terminal/sessions`)
-    const listData = await listRes.json()
-    const sessionId = listData.sessions[0].id
-
-    const res = await fetch(`${baseUrl}/api/terminal/input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, command: '/compact' }),
-    })
-    assert.equal(res.status, 200)
-    const data = await res.json()
-    assert.equal(data.success, true)
-    assert.ok(data.tokenUsage)
-    assert.ok(data.tokenUsage.remainingPercent > 0)
-  })
-
-  it('closes and kills a session on POST /api/terminal/kill', async () => {
-    // 1. Create a session to kill
-    const createRes = await fetch(`${baseUrl}/api/terminal/create`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hostId: 'codex', title: 'Session To Kill' }),
-    })
-    const createData = await createRes.json()
-    const sessionId = createData.session.id
-
-    // 2. Kill it
-    const killRes = await fetch(`${baseUrl}/api/terminal/kill`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
-    })
-    assert.equal(killRes.status, 200)
-    const killData = await killRes.json()
-    assert.equal(killData.success, true)
-    assert.equal(killData.sessionId, sessionId)
-
-    // 3. Verify it is no longer listed in active sessions
-    const listRes = await fetch(`${baseUrl}/api/terminal/sessions`)
-    const listData = await listRes.json()
-    assert.ok(!listData.sessions.some((s: any) => s.id === sessionId))
-  })
-
-  it('fetches memoseb live context on GET /api/memoseb/memories', async () => {
-    const res = await fetch(`${baseUrl}/api/memoseb/memories`)
-    assert.equal(res.status, 200)
-    const data = await res.json()
-    assert.ok(Array.isArray(data.memories))
-    assert.ok(typeof data.rawText === 'string')
-  })
-
-  it('returns ecosystem snapshot on GET /api/snapshot', async () => {
-    const res = await fetch(`${baseUrl}/api/snapshot`)
-    assert.equal(res.status, 200)
-    const data = await res.json()
-    assert.equal(data.optionalMode, true)
-    assert.ok(Array.isArray(data.availableHosts))
-    assert.ok(typeof data.hubsebDetected === 'boolean')
-  })
-
-  it('returns segmented artifacts on GET /api/artifacts', async () => {
+  it('returns plans array on GET /api/artifacts', async () => {
     const res = await fetch(`${baseUrl}/api/artifacts`)
     assert.equal(res.status, 200)
     const data = await res.json()
     assert.ok(Array.isArray(data))
   })
 
-  it('detects plans in text payload on POST /api/detect', async () => {
-    const planMarkdown = `# Plan de Arquitectura Sixzone\n\n\`\`\`mermaid\ngraph TD;\nA-->B;\n\`\`\``
-    const res = await fetch(`${baseUrl}/api/detect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: planMarkdown }),
-    })
-    assert.equal(res.status, 200)
-    const data = await res.json()
-    assert.ok(data.detected)
-    assert.equal(data.detected.title, 'Plan de Arquitectura Sixzone')
-    assert.equal(data.detected.segment, 'plans')
-    assert.equal(data.detected.mermaidBlocks.length, 1)
-  })
+  it('publishes and detects a plan on POST /api/plans', async () => {
+    const planMarkdown = `# Plan de Migración Arquitectónica
 
-  it('handles memoseb sync endpoint on POST /api/sync-memoseb', async () => {
-    const res = await fetch(`${baseUrl}/api/sync-memoseb`, {
+> [!IMPORTANT]
+> Este cambio no debe alterar la compatibilidad con hubseb.
+
+## Matriz de Despacho
+
+| Paso | Especialista | Archivo |
+| :--- | :--- | :--- |
+| 1 | Orion | src/cli/ui-server.ts |
+
+\`\`\`mermaid
+flowchart TD
+  A["Diseño"] --> B["Implementación"]
+  B --> C["Validación"]
+\`\`\`
+`
+
+    const res = await fetch(`${baseUrl}/api/plans`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: 'Prueba de Memoria Sixzone',
-        content: 'Contenido de prueba Sixzone',
-        category: 'architecture',
+        content: planMarkdown,
+        filePath: 'plans/test-migration.md',
+        title: 'Plan de Migración Arquitectónica',
       }),
     })
+
     assert.equal(res.status, 200)
     const data = await res.json()
-    assert.ok(typeof data.success === 'boolean')
+    assert.ok(data.detected)
+    assert.equal(data.detected.title, 'Plan de Migración Arquitectónica')
+    assert.equal(data.detected.segment, 'plans')
+    assert.equal(data.detected.mermaidBlocks.length, 1)
+
+    // Verify it is now visible in GET /api/plans
+    const listRes = await fetch(`${baseUrl}/api/plans`)
+    const listData = await listRes.json()
+    assert.ok(listData.plans.length >= 1)
+    assert.equal(listData.activePlan?.title, 'Plan de Migración Arquitectónica')
   })
 
-  it('returns 404 on unknown paths', async () => {
-    const res = await fetch(`${baseUrl}/api/unknown-endpoint`)
-    assert.equal(res.status, 404)
-    const data = await res.json()
-    assert.equal(data.error, 'Not found')
+  it('receives Server-Sent Events on GET /api/events', async () => {
+    const controller = new AbortController()
+    const res = await fetch(`${baseUrl}/api/events`, {
+      signal: controller.signal,
+    })
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-type') ?? '', /text\/event-stream/)
+
+    const reader = res.body?.getReader()
+    assert.ok(reader)
+
+    // Read initial snapshot chunk
+    const { value } = await reader.read()
+    const text = new TextDecoder().decode(value)
+    assert.match(text, /"type":"init"/)
+
+    controller.abort()
+  })
+
+  it('supports initialPlanFile option when launching ui server', async () => {
+    const planFile = path.join(tempDir, 'sample-plan.md')
+    await fs.writeFile(
+      planFile,
+      '# Plan Inicial de Prueba\n\nContenido de prueba para el visor.',
+      'utf8'
+    )
+
+    const server2 = await startUiServer({
+      port: 0,
+      openBrowser: false,
+      openWindow: false,
+      initialPlanFile: planFile,
+      vaultRoot: path.join(tempDir, 'vault2'),
+    })
+
+    try {
+      const active = server2.getActivePlan()
+      assert.ok(active)
+      assert.equal(active?.title, 'Plan Inicial de Prueba')
+    } finally {
+      await server2.close()
+    }
   })
 })
