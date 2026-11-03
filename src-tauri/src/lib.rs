@@ -1,78 +1,8 @@
-use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // --- Domain Models ---
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentHostId {
-    Antigravity,
-    Claude,
-    Codex,
-    Opencode,
-    Herdr,
-    Shell,
-}
-
-impl AgentHostId {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Antigravity => "antigravity",
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::Opencode => "opencode",
-            Self::Herdr => "herdr",
-            Self::Shell => "shell",
-        }
-    }
-
-    pub fn from_str_opt(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "antigravity" => Some(Self::Antigravity),
-            "claude" => Some(Self::Claude),
-            "codex" => Some(Self::Codex),
-            "opencode" => Some(Self::Opencode),
-            "herdr" => Some(Self::Herdr),
-            "shell" => Some(Self::Shell),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TerminalStatus {
-    Running,
-    Idle,
-    Blocked,
-    Exited,
-}
-
-impl TerminalStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Idle => "idle",
-            Self::Blocked => "blocked",
-            Self::Exited => "exited",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TerminalSession {
-    pub id: String,
-    pub title: String,
-    pub host_id: AgentHostId,
-    pub cwd: String,
-    pub pid: Option<u32>,
-    pub status: TerminalStatus,
-    pub created_at: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThemeMode {
@@ -97,7 +27,7 @@ impl ThemeMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectedArtifact {
     pub id: String,
     pub session_id: String,
@@ -112,205 +42,12 @@ pub struct DetectedArtifact {
     pub memoseb_category: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct VaultStats {
-    pub project_count: usize,
-    pub memory_count: usize,
-    pub total_tokens: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct SebEcosystemSnapshot {
-    pub optional_mode: bool,
-    pub hubseb_detected: bool,
-    pub crewseb_detected: bool,
-    pub memoseb_detected: bool,
-    pub herdr_detected: bool,
-    pub available_hosts: Vec<String>,
-    pub concurrency_mode: String,
-    pub max_local_parallel: usize,
-    pub preset: String,
-    pub personas: HashMap<String, String>,
-    pub active_subagents_count: usize,
-    pub memo_events_count: usize,
-    pub vault_stats: VaultStats,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionContextQuota {
-    pub session_id: String,
-    pub model_name: String,
-    pub used_tokens: usize,
-    pub max_tokens: usize,
-    pub remaining_percent: usize,
-    pub input_tokens: usize,
-    pub output_tokens: usize,
-    pub quota_used_percent: usize,
-    pub quota_window_label: String,
-    pub warning_level: String,
-}
-
 fn now_iso() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     format!("{now}")
-}
-
-// --- Terminal & Process Manager ---
-
-struct ActiveProcess {
-    session: TerminalSession,
-    child: Option<Child>,
-}
-
-pub struct TerminalManager {
-    processes: Mutex<HashMap<String, ActiveProcess>>,
-}
-
-impl Default for TerminalManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TerminalManager {
-    pub fn new() -> Self {
-        Self {
-            processes: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn create_session(
-        &self,
-        host_id: AgentHostId,
-        cwd: Option<String>,
-        title: Option<String>,
-        command: Option<String>,
-        args: Option<Vec<String>>,
-    ) -> Result<TerminalSession, String> {
-        let session_id = format!("term-{}", now_iso());
-        let effective_title = title.unwrap_or_else(|| format!("{} Terminal", host_id.as_str()));
-        let effective_cwd = cwd.unwrap_or_else(|| {
-            env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .to_string_lossy()
-                .to_string()
-        });
-
-        let shell_cmd = command.unwrap_or_else(|| {
-            if cfg!(target_os = "windows") {
-                "cmd.exe".to_string()
-            } else {
-                env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
-            }
-        });
-
-        let mut cmd = Command::new(&shell_cmd);
-        cmd.current_dir(&effective_cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        if let Some(cmd_args) = args {
-            for arg in cmd_args {
-                cmd.arg(arg);
-            }
-        }
-
-        let child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn shell '{}': {e}", shell_cmd))?;
-        let pid = Some(child.id());
-
-        let session = TerminalSession {
-            id: session_id.clone(),
-            title: effective_title,
-            host_id,
-            cwd: effective_cwd,
-            pid,
-            status: TerminalStatus::Running,
-            created_at: now_iso(),
-        };
-
-        let mut lock = self.processes.lock().unwrap();
-        lock.insert(
-            session_id,
-            ActiveProcess {
-                session: session.clone(),
-                child: Some(child),
-            },
-        );
-
-        Ok(session)
-    }
-
-    pub fn write_session(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
-        let mut lock = self.processes.lock().unwrap();
-        let proc = lock
-            .get_mut(session_id)
-            .ok_or_else(|| format!("Session '{session_id}' not found"))?;
-
-        if let Some(ref mut child) = proc.child {
-            if let Some(ref mut stdin) = child.stdin {
-                stdin
-                    .write_all(data)
-                    .map_err(|e| format!("Write to stdin failed: {e}"))?;
-                stdin
-                    .flush()
-                    .map_err(|e| format!("Flush stdin failed: {e}"))?;
-                return Ok(());
-            }
-        }
-        Err("Process stdin unavailable".to_string())
-    }
-
-    pub fn resize_session(&self, session_id: &str, _cols: u16, _rows: u16) -> Result<(), String> {
-        let lock = self.processes.lock().unwrap();
-        if lock.contains_key(session_id) {
-            Ok(())
-        } else {
-            Err(format!("Session '{session_id}' not found"))
-        }
-    }
-
-    pub fn close_session(&self, session_id: &str) -> Result<(), String> {
-        let mut lock = self.processes.lock().unwrap();
-        if let Some(mut proc) = lock.remove(session_id) {
-            if let Some(ref mut child) = proc.child {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-            Ok(())
-        } else {
-            Err(format!("Session '{session_id}' not found"))
-        }
-    }
-
-    pub fn list_sessions(&self) -> Vec<TerminalSession> {
-        let mut lock = self.processes.lock().unwrap();
-        let mut list = Vec::new();
-
-        for proc in lock.values_mut() {
-            if let Some(ref mut child) = proc.child {
-                match child.try_wait() {
-                    Ok(Some(_)) => {
-                        proc.session.status = TerminalStatus::Exited;
-                    }
-                    Ok(None) => {
-                        proc.session.status = TerminalStatus::Running;
-                    }
-                    Err(_) => {
-                        proc.session.status = TerminalStatus::Exited;
-                    }
-                }
-            }
-            list.push(proc.session.clone());
-        }
-
-        list
-    }
 }
 
 // --- Plan & Artifact Detection in Rust ---
@@ -356,7 +93,9 @@ pub fn classify_artifact_segment(file_path: &str, content: &str) -> &'static str
     if lower_path.contains("spec")
         || lower_path.ends_with(".feature")
         || lower_content.contains("scenario:")
-        || (lower_content.contains("given ") && lower_content.contains("when ") && lower_content.contains("then "))
+        || (lower_content.contains("given ")
+            && lower_content.contains("when ")
+            && lower_content.contains("then "))
     {
         return "specs";
     }
@@ -448,83 +187,9 @@ pub fn detect_plan(
     })
 }
 
-// --- Ecosystem Reader in Rust ---
-
-pub fn read_ecosystem_snapshot(home_dir: &Path) -> SebEcosystemSnapshot {
-    let hubseb_dir = home_dir.join(".config").join("hubseb");
-    let topo_file = hubseb_dir.join("topology.json");
-    let models_file = hubseb_dir.join("crewseb-models.json");
-    let personas_file = hubseb_dir.join("crewseb-personas.json");
-    let memoseb_db = home_dir.join(".local").join("share").join("memoseb").join("vault.sqlite");
-
-    let hubseb_detected = topo_file.exists();
-    let crewseb_detected = models_file.exists() || personas_file.exists();
-    let memoseb_detected = memoseb_db.exists();
-    let herdr_detected = home_dir.join(".herdr").exists();
-
-    let mut personas = HashMap::new();
-    personas.insert("researcher".to_string(), "Theo".to_string());
-    personas.insert("analyst".to_string(), "Axel".to_string());
-    personas.insert("architect".to_string(), "Juno".to_string());
-    personas.insert("developer".to_string(), "Orion".to_string());
-    personas.insert("qa-automation".to_string(), "Elio".to_string());
-    personas.insert("devops".to_string(), "Rhea".to_string());
-    personas.insert("sre".to_string(), "Vega".to_string());
-    personas.insert("security".to_string(), "Kael".to_string());
-    personas.insert("code-reviewer".to_string(), "Kira".to_string());
-    personas.insert("documenter".to_string(), "Astrid".to_string());
-
-    if let Ok(content) = fs::read_to_string(&personas_file) {
-        for (role, _) in personas.clone() {
-            let key = format!("\"{}\":", role);
-            if let Some(pos) = content.find(&key) {
-                let rest = &content[pos + key.len()..];
-                if let Some(start_q) = rest.find('"') {
-                    if let Some(end_q) = rest[start_q + 1..].find('"') {
-                        let name = &rest[start_q + 1..start_q + 1 + end_q];
-                        personas.insert(role, name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    let mut available_hosts = vec!["shell".to_string()];
-    if home_dir.join(".gemini").join("antigravity-cli").exists() {
-        available_hosts.push("antigravity".to_string());
-    }
-    if home_dir.join(".anthropic").exists() {
-        available_hosts.push("claude".to_string());
-    }
-    if home_dir.join(".codex").exists() {
-        available_hosts.push("codex".to_string());
-    }
-
-    SebEcosystemSnapshot {
-        optional_mode: true,
-        hubseb_detected,
-        crewseb_detected,
-        memoseb_detected,
-        herdr_detected,
-        available_hosts,
-        concurrency_mode: "parallel".to_string(),
-        max_local_parallel: 1,
-        preset: "cloud-tiered".to_string(),
-        personas,
-        active_subagents_count: 0,
-        memo_events_count: 0,
-        vault_stats: VaultStats {
-            project_count: if memoseb_detected { 1 } else { 0 },
-            memory_count: if memoseb_detected { 1 } else { 0 },
-            total_tokens: if memoseb_detected { 100 } else { 0 },
-        },
-    }
-}
-
-// --- IPC Command Dispatcher ---
+// --- Minimal IPC Command Dispatcher ---
 
 pub struct DeckIpcRouter {
-    pub terminal_manager: Arc<TerminalManager>,
     pub theme: Mutex<ThemeMode>,
     pub artifacts: Mutex<Vec<DetectedArtifact>>,
 }
@@ -538,7 +203,6 @@ impl Default for DeckIpcRouter {
 impl DeckIpcRouter {
     pub fn new() -> Self {
         Self {
-            terminal_manager: Arc::new(TerminalManager::new()),
             theme: Mutex::new(ThemeMode::Dark),
             artifacts: Mutex::new(Vec::new()),
         }
@@ -546,69 +210,34 @@ impl DeckIpcRouter {
 
     pub fn dispatch(&self, command: &str, payload: &str) -> Result<String, String> {
         match command {
-            "deck:terminal_create" => {
-                let host_id = if payload.contains("antigravity") {
-                    AgentHostId::Antigravity
-                } else if payload.contains("claude") {
-                    AgentHostId::Claude
-                } else {
-                    AgentHostId::Shell
-                };
-                let session = self.terminal_manager.create_session(host_id, None, None, None, None)?;
-                Ok(format!(
-                    r#"{{"id":"{}","title":"{}","status":"{}"}}"#,
-                    session.id, session.title, session.status.as_str()
-                ))
-            }
-            "deck:terminal_write" => {
-                // simple write
-                Ok(r#"{"status":"ok"}"#.to_string())
-            }
-            "deck:terminal_resize" => {
-                Ok(r#"{"status":"ok"}"#.to_string())
-            }
-            "deck:terminal_close" => {
-                Ok(r#"{"status":"ok"}"#.to_string())
-            }
-            "deck:terminal_list" => {
-                let sessions = self.terminal_manager.list_sessions();
-                Ok(format!(r#"{{"count":{}}}"#, sessions.len()))
-            }
-            "deck:ecosystem_snapshot" => {
-                let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                let snap = read_ecosystem_snapshot(Path::new(&home));
-                Ok(format!(
-                    r#"{{"optionalMode":{},"hubseb":{},"crewseb":{},"memoseb":{}}}"#,
-                    snap.optional_mode, snap.hubseb_detected, snap.crewseb_detected, snap.memoseb_detected
-                ))
-            }
-            "deck:session_quota" => {
-                let quota = SessionContextQuota {
-                    session_id: "active".to_string(),
-                    model_name: "gemini-3.8-pro".to_string(),
-                    used_tokens: 15_000,
-                    max_tokens: 200_000,
-                    remaining_percent: 92,
-                    input_tokens: 10_000,
-                    output_tokens: 5_000,
-                    quota_used_percent: 8,
-                    quota_window_label: "15.0k / 200k (92% left)".to_string(),
-                    warning_level: "healthy".to_string(),
-                };
-                Ok(format!(
-                    r#"{{"usedTokens":{},"remainingPercent":{},"warningLevel":"{}"}}"#,
-                    quota.used_tokens, quota.remaining_percent, quota.warning_level
-                ))
-            }
             "deck:artifacts_list" => {
                 let arts = self.artifacts.lock().unwrap();
                 Ok(format!(r#"{{"count":{}}}"#, arts.len()))
             }
+            "deck:plan_submit" => {
+                let artifact = detect_plan("session-ipc", "deckseb", payload, None)
+                    .unwrap_or_else(|| DetectedArtifact {
+                        id: format!("art-{}", now_iso()),
+                        session_id: "session-ipc".to_string(),
+                        project_slug: "deckseb".to_string(),
+                        segment: classify_artifact_segment("plans/plan.md", payload).to_string(),
+                        title: "Plan".to_string(),
+                        file_path: "plans/plan.md".to_string(),
+                        content: payload.to_string(),
+                        mermaid_blocks: extract_mermaid_blocks(payload),
+                        detected_at: now_iso(),
+                        synced_to_memoseb: false,
+                        memoseb_category: Some("architecture".to_string()),
+                    });
+
+                let title = artifact.title.clone();
+                let segment = artifact.segment.clone();
+                let mut arts = self.artifacts.lock().unwrap();
+                arts.push(artifact);
+                Ok(format!(r#"{{"title":"{}","segment":"{}"}}"#, title, segment))
+            }
             "deck:sync_artifact_memoseb" => {
                 Ok(r#"{"success":true}"#.to_string())
-            }
-            "deck:memo_events_list" => {
-                Ok(r#"{"events":[]}"#.to_string())
             }
             "deck:get_theme" => {
                 let th = self.theme.lock().unwrap();
@@ -646,9 +275,18 @@ mod tests {
     #[test]
     fn test_classify_artifact_segment() {
         assert_eq!(classify_artifact_segment("plans/plan.md", "# Plan"), "plans");
-        assert_eq!(classify_artifact_segment("specs/login.feature", "Scenario: Login"), "specs");
-        assert_eq!(classify_artifact_segment("reviews/audit.md", "# Security Audit"), "reviews");
-        assert_eq!(classify_artifact_segment("incident.md", "Root Cause Analysis: outage"), "post-mortems");
+        assert_eq!(
+            classify_artifact_segment("specs/login.feature", "Scenario: Login"),
+            "specs"
+        );
+        assert_eq!(
+            classify_artifact_segment("reviews/audit.md", "# Security Audit"),
+            "reviews"
+        );
+        assert_eq!(
+            classify_artifact_segment("incident.md", "Root Cause Analysis: outage"),
+            "post-mortems"
+        );
         assert_eq!(classify_artifact_segment("diag.mmd", "graph TD"), "diagrams");
     }
 
@@ -664,44 +302,32 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_manager_lifecycle() {
-        let mgr = TerminalManager::new();
-        let session = mgr.create_session(AgentHostId::Shell, None, Some("Test Term".to_string()), None, None);
-        assert!(session.is_ok());
-        let sess = session.unwrap();
-        assert_eq!(sess.status, TerminalStatus::Running);
-
-        let write_res = mgr.write_session(&sess.id, b"echo hello\n");
-        assert!(write_res.is_ok());
-
-        let list = mgr.list_sessions();
-        assert_eq!(list.len(), 1);
-
-        let close_res = mgr.close_session(&sess.id);
-        assert!(close_res.is_ok());
-        let list_after = mgr.list_sessions();
-        assert_eq!(list_after.len(), 0);
-    }
-
-    #[test]
     fn test_ipc_router_commands() {
         let router = DeckIpcRouter::new();
 
-        let term_res = router.dispatch("deck:terminal_create", "shell");
-        assert!(term_res.is_ok());
-
-        let eco_res = router.dispatch("deck:ecosystem_snapshot", "");
-        assert!(eco_res.is_ok());
-        assert!(eco_res.unwrap().contains("optionalMode"));
-
-        let quota_res = router.dispatch("deck:session_quota", "");
-        assert!(quota_res.is_ok());
-        assert!(quota_res.unwrap().contains("healthy"));
-
+        // 1. Theme get and set
         let theme_get = router.dispatch("deck:get_theme", "");
         assert_eq!(theme_get.unwrap(), r#"{"theme":"dark"}"#);
 
         let theme_set = router.dispatch("deck:set_theme", "light");
         assert_eq!(theme_set.unwrap(), r#"{"theme":"light"}"#);
+
+        // 2. Submit plan
+        let plan_payload = "# Plan de Prueba\n\n```mermaid\ngraph TD\nA-->B\n```";
+        let submit_res = router.dispatch("deck:plan_submit", plan_payload);
+        assert!(submit_res.is_ok());
+        let submit_json = submit_res.unwrap();
+        assert!(submit_json.contains("Plan de Prueba"));
+        assert!(submit_json.contains("plans"));
+
+        // 3. Artifacts list
+        let list_res = router.dispatch("deck:artifacts_list", "");
+        assert!(list_res.is_ok());
+        assert_eq!(list_res.unwrap(), r#"{"count":1}"#);
+
+        // 4. Memoseb sync
+        let sync_res = router.dispatch("deck:sync_artifact_memoseb", "");
+        assert!(sync_res.is_ok());
+        assert_eq!(sync_res.unwrap(), r#"{"success":true}"#);
     }
 }
