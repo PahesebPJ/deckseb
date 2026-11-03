@@ -92,7 +92,11 @@ export class PlanWatcher {
     this.pollIntervalMs = options?.pollIntervalMs ?? 750
     this.includeAntigravityBrain = options?.includeAntigravityBrain !== false
     this.homeDir = options?.homeDir ?? os.homedir()
-    this.configuredWatchDirs = options?.watchDirs ? [...options.watchDirs] : []
+    this.configuredWatchDirs = options?.watchDirs
+      ? [...options.watchDirs]
+      : options?.homeDir
+        ? []
+        : ['./plans', './.seb-vault', './.claude']
     this.configuredWatchFiles = options?.watchFiles ? [...options.watchFiles] : []
   }
 
@@ -223,7 +227,7 @@ export class PlanWatcher {
       paths.add(path.join(this.homeDir, '.gemini', 'antigravity-cli', 'brain'))
     }
 
-    for (const d of ['./plans', './.seb-vault', './.claude', ...this.configuredWatchDirs]) {
+    for (const d of this.configuredWatchDirs) {
       paths.add(path.resolve(process.cwd(), d))
     }
 
@@ -245,7 +249,7 @@ export class PlanWatcher {
       candidateDirs.add(path.join(this.homeDir, '.gemini', 'antigravity-cli', 'brain'))
     }
 
-    for (const d of ['./plans', './.seb-vault', './.claude', ...this.configuredWatchDirs]) {
+    for (const d of this.configuredWatchDirs) {
       candidateDirs.add(path.resolve(process.cwd(), d))
     }
 
