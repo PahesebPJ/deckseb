@@ -70,7 +70,8 @@ export function classifyArtifactSegment(
   }
   if (
     normalizedPath.includes('plan') ||
-    normalizedPath.includes('roadmap')
+    normalizedPath.includes('roadmap') ||
+    normalizedPath.includes('implementation')
   ) {
     return 'plans'
   }
@@ -103,10 +104,10 @@ export function classifyArtifactSegment(
   }
 
   if (
-    /#\s*.*(plan|roadmap|implementation|fase|matriz\s+de\s+despacho)/i.test(
+    /#\s*.*(plan|roadmap|implementation|fase|matriz\s+de\s+despacho|proposed\s*changes|verification\s*plan)/i.test(
       content
     ) ||
-    /\b(dispatch\s*matrix|matriz\s*de\s*despacho)\b/i.test(content)
+    /\b(dispatch\s*matrix|matriz\s*de\s*despacho|proposed\s*changes|verification\s*plan)\b/i.test(content)
   ) {
     return 'plans'
   }
@@ -177,24 +178,44 @@ export function detectPlanInStream(
 
   const mermaidBlocks = extractMermaidBlocks(rawText)
 
-  // Must have mermaid blocks OR strong markdown plan/spec/review/postmortem structure
-  const hasHeading1 = /^#\s+(.+)$/m.test(rawText)
-  const hasPlanKeywords =
-    /\b(plan|implementation|dispatch\s*matrix|matriz\s*de\s*despacho|scenario:|code\s*review|security\s*audit|post-?mortem)\b/i.test(
+  // Detect plan-specific markdown headings (e.g. ## Proposed Changes, ## Verification Plan, etc.)
+  const hasPlanHeading =
+    /^#{1,3}\s+.*(plan|proposed\s*changes|verification(\s*plan)?|dispatch\s*matrix|matriz\s*de\s*despacho|implementation|roadmap|architecture|review|post-?mortem|acceptance\s*criteria)/im.test(
       rawText
     )
+
+  // General heading checks
+  const hasHeading1 = /^#\s+(.+)$/m.test(rawText)
+  const hasAnyHeading = /^#{1,3}\s+(.+)$/m.test(rawText)
+  const hasPlanKeywords =
+    /\b(plan|implementation|proposed\s*changes|verification(\s*plan)?|dispatch\s*matrix|matriz\s*de\s*despacho|scenario:|code\s*review|security\s*audit|post-?mortem)\b/i.test(
+      rawText
+    )
+
+  const isPlanFileName =
+    Boolean(filePath) &&
+    /(^|[/\\])[^/\\]*(plan|implementation|roadmap)[^/\\]*\.(md|markdown)$/i.test(
+      filePath!
+    )
+  const isDiagramFile = Boolean(filePath) && /\.mmd$/i.test(filePath!)
   const isTargetFile =
     Boolean(filePath) &&
     /\.(md|markdown|mmd)$/i.test(filePath!) &&
-    (hasHeading1 || mermaidBlocks.length > 0)
+    (hasAnyHeading || mermaidBlocks.length > 0 || hasPlanKeywords)
 
-  const qualifies = mermaidBlocks.length > 0 || (hasHeading1 && hasPlanKeywords) || isTargetFile
+  const qualifies =
+    mermaidBlocks.length > 0 ||
+    hasPlanHeading ||
+    (hasHeading1 && hasPlanKeywords) ||
+    isPlanFileName ||
+    isDiagramFile ||
+    isTargetFile
 
   if (!qualifies) {
     return null
   }
 
-  // Extract title from first markdown heading 1, heading 2, or file path
+  // Extract title from first markdown heading 1, heading 2, heading 3, or file path
   let title = ''
   const h1Match = rawText.match(/^#\s+(.+)$/m)
   if (h1Match?.[1]) {
@@ -203,11 +224,18 @@ export function detectPlanInStream(
     const h2Match = rawText.match(/^##\s+(.+)$/m)
     if (h2Match?.[1]) {
       title = h2Match[1].trim()
-    } else if (filePath) {
-      const base = path.basename(filePath, path.extname(filePath))
-      title = base.replace(/[-_]/g, ' ')
     } else {
-      title = 'Detected Artifact'
+      const h3Match = rawText.match(/^###\s+(.+)$/m)
+      if (h3Match?.[1]) {
+        title = h3Match[1].trim()
+      } else if (filePath) {
+        const base = path.basename(filePath, path.extname(filePath))
+        title = base
+          .replace(/[-_]/g, ' ')
+          .replace(/\b\w/g, (c) => c.toUpperCase())
+      } else {
+        title = 'Detected Artifact'
+      }
     }
   }
 

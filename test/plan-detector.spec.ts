@@ -94,6 +94,25 @@ flowchart LR
     assert.equal(result, null)
   })
 
+  it('detects plan with typical plan headers (Proposed Changes, Verification Plan, Matriz de Despacho)', () => {
+    const content = `
+## Proposed Changes
+We propose changes to the system.
+
+## Verification Plan
+### Automated Tests
+Run tests.
+
+## Matriz de Despacho
+| Step | Role | Status |
+| 1 | developer | done |
+`
+    const artifact = detectPlanInStream('s-2', 'deckseb', content, 'brain/conv-1/implementation_plan.md')
+    assert.ok(artifact)
+    assert.equal(artifact.title, 'Proposed Changes')
+    assert.equal(artifact.segment, 'plans')
+  })
+
   it('slugifies titles safely', () => {
     assert.equal(
       slugifyTitle('Implementation Plan: Tauri v2 Core!'),
