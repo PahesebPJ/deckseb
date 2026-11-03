@@ -1,63 +1,11 @@
 /**
- * deckseb architectural domain and IPC contracts.
- * deckseb acts as an optional passive observer leaf node (`ui.deck`) in hubseb topology.
+ * deckseb minimal architectural domain and IPC contracts.
+ * deckseb acts as an instant, passive plan viewer leaf node (`ui.deck`) in hubseb topology.
  */
-
-// --- Host & Persona Types ---
-
-export type AgentHostId =
-  | 'antigravity'
-  | 'claude'
-  | 'codex'
-  | 'opencode'
-  | 'herdr'
-  | 'shell'
-
-export const SUPPORTED_AGENT_HOSTS: readonly AgentHostId[] = [
-  'antigravity',
-  'claude',
-  'codex',
-  'opencode',
-  'herdr',
-  'shell',
-] as const
-
-export const CREW_ROLES = [
-  'researcher',
-  'analyst',
-  'architect',
-  'developer',
-  'qa-automation',
-  'devops',
-  'sre',
-  'security',
-  'code-reviewer',
-  'documenter',
-] as const
-
-export type CrewRole = (typeof CREW_ROLES)[number]
-
-export type ReasoningTier = 'fast' | 'balanced' | 'deep'
-
-export type ConcurrencyMode = 'parallel' | 'queue' | 'mixed'
 
 export type ThemeMode = 'light' | 'dark'
 
-// --- Terminal & Process Models ---
-
-export type TerminalStatus = 'running' | 'idle' | 'blocked' | 'exited'
-
-export interface TerminalSession {
-  id: string
-  title: string
-  hostId: AgentHostId
-  cwd: string
-  pid?: number | null
-  status: TerminalStatus
-  createdAt: string
-}
-
-// --- Artifact Models ---
+// --- Artifact & Plan Models ---
 
 export type ArtifactSegment =
   | 'plans'
@@ -103,154 +51,31 @@ export interface DetectedArtifact {
   memosebCategory?: MemosebCategory
 }
 
-// --- Subagent Activity & Monitoring ---
+// --- Plan Watcher Models ---
 
-export type SubagentStatus = 'working' | 'completed' | 'failed' | 'idle'
+export type PlanWatcherEventType = 'plan:created' | 'plan:updated' | 'plan:deleted'
 
-export interface CrewSubagentActivity {
-  id: string
-  sessionId: string
-  role: CrewRole
-  personaName: string
-  badge: string
-  taskRole: string
-  status: SubagentStatus
-  worktree?: string
-  modelTier: ReasoningTier
-  modelTag: string
-  startedAt: string
-  updatedAt: string
-}
-
-// --- Memoseb Integration ---
-
-export type MemoAction = 'context' | 'recall' | 'remember' | 'analyze'
-
-export interface MemoActivityEvent {
-  id: string
+export interface PlanWatcherEvent {
+  type: PlanWatcherEventType
+  artifact: DetectedArtifact
+  filePath: string
   timestamp: string
-  action: MemoAction
-  projectId: string
-  summary: string
-  tokenCount: number
-  category?: string
 }
 
-export interface VaultStats {
-  projectCount: number
-  memoryCount: number
-  totalTokens: number
-}
+export type PlanWatcherCallback = (event: PlanWatcherEvent) => void
 
-// --- Context Quota & Token Window ---
-
-export type QuotaWarningLevel = 'healthy' | 'warning' | 'critical'
-
-export interface SessionContextQuota {
-  sessionId: string
-  modelName: string
-  usedTokens: number
-  maxTokens: number
-  remainingPercent: number
-  inputTokens: number
-  outputTokens: number
-  quotaUsedPercent: number
-  quotaWindowLabel: string
-  warningLevel: QuotaWarningLevel
-}
-
-// --- Ecosystem Topology & Passive Snapshot ---
-
-export interface SebEcosystemSnapshot {
-  optionalMode: true
-  hubsebDetected: boolean
-  crewsebDetected: boolean
-  memosebDetected: boolean
-  herdrDetected: boolean
-  availableHosts: AgentHostId[]
-  concurrencyMode: ConcurrencyMode
-  maxLocalParallel: number
-  preset: string
-  personas: Record<CrewRole, string>
-  activeSubagents: CrewSubagentActivity[]
-  memoEvents: MemoActivityEvent[]
-  vaultStats: VaultStats
-}
-
-// --- Transcript Stream Parsing (e.g. transcript.jsonl) ---
-
-export interface TranscriptToolCall {
-  name: string
-  args: Record<string, unknown>
-}
-
-export interface TranscriptEntry {
-  step_index?: number
-  type?: string
-  input_tokens?: number
-  output_tokens?: number
-  tool_calls?: TranscriptToolCall[]
-  timestamp?: string
-  raw?: string
+export interface PlanWatcherOptions {
+  watchDirs?: string[]
+  watchFiles?: string[]
+  projectSlug?: string
+  pollIntervalMs?: number
+  includeAntigravityBrain?: boolean
+  homeDir?: string
 }
 
 // --- Tauri v2 IPC Command & Event Specification ---
 
 export interface TauriDeckCommands {
-  // Terminal commands
-  'deck:terminal_create': {
-    request: {
-      hostId: AgentHostId
-      cwd?: string
-      title?: string
-      command?: string
-      args?: string[]
-    }
-    response: TerminalSession
-  }
-  'deck:terminal_write': {
-    request: {
-      sessionId: string
-      data: string
-    }
-    response: void
-  }
-  'deck:terminal_resize': {
-    request: {
-      sessionId: string
-      cols: number
-      rows: number
-    }
-    response: void
-  }
-  'deck:terminal_close': {
-    request: {
-      sessionId: string
-    }
-    response: void
-  }
-  'deck:terminal_list': {
-    request: void
-    response: TerminalSession[]
-  }
-
-  // Ecosystem & Hubseb discovery
-  'deck:ecosystem_snapshot': {
-    request: {
-      forceRefresh?: boolean
-    } | void
-    response: SebEcosystemSnapshot
-  }
-
-  // Context quota
-  'deck:session_quota': {
-    request: {
-      sessionId: string
-    }
-    response: SessionContextQuota
-  }
-
-  // Artifact management & Memoseb synchronization
   'deck:artifacts_list': {
     request: {
       sessionId?: string
@@ -258,6 +83,15 @@ export interface TauriDeckCommands {
       segment?: ArtifactSegment
     } | void
     response: DetectedArtifact[]
+  }
+  'deck:plan_submit': {
+    request: {
+      title?: string
+      content: string
+      filePath?: string
+      projectSlug?: string
+    }
+    response: DetectedArtifact | null
   }
   'deck:sync_artifact_memoseb': {
     request: {
@@ -272,17 +106,6 @@ export interface TauriDeckCommands {
       error?: string
     }
   }
-
-  // Memoseb telemetry
-  'deck:memo_events_list': {
-    request: {
-      limit?: number
-      projectId?: string
-    } | void
-    response: MemoActivityEvent[]
-  }
-
-  // UI preferences
   'deck:get_theme': {
     request: void
     response: ThemeMode
@@ -296,45 +119,20 @@ export interface TauriDeckCommands {
 }
 
 export interface TauriDeckEvents {
-  'deck:terminal-data': {
-    sessionId: string
-    data: string
-  }
-  'deck:terminal-exit': {
-    sessionId: string
-    exitCode: number
-  }
-  'deck:ecosystem-updated': SebEcosystemSnapshot
   'deck:artifact-detected': DetectedArtifact
-  'deck:subagent-updated': CrewSubagentActivity
-  'deck:quota-updated': SessionContextQuota
-  'deck:memo-event': MemoActivityEvent
 }
 
 export type DeckCommandName = keyof TauriDeckCommands
 export type DeckEventName = keyof TauriDeckEvents
 
 export const DECK_IPC_COMMANDS: readonly DeckCommandName[] = [
-  'deck:terminal_create',
-  'deck:terminal_write',
-  'deck:terminal_resize',
-  'deck:terminal_close',
-  'deck:terminal_list',
-  'deck:ecosystem_snapshot',
-  'deck:session_quota',
   'deck:artifacts_list',
+  'deck:plan_submit',
   'deck:sync_artifact_memoseb',
-  'deck:memo_events_list',
   'deck:get_theme',
   'deck:set_theme',
 ] as const
 
 export const DECK_IPC_EVENTS: readonly DeckEventName[] = [
-  'deck:terminal-data',
-  'deck:terminal-exit',
-  'deck:ecosystem-updated',
   'deck:artifact-detected',
-  'deck:subagent-updated',
-  'deck:quota-updated',
-  'deck:memo-event',
 ] as const
