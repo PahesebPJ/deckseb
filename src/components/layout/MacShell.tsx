@@ -1,46 +1,28 @@
 import React from 'react'
-import { AgentHostId, SUPPORTED_AGENT_HOSTS, ThemeMode } from '../../types/deck'
+import { ThemeMode } from '../../types/deck'
 
-export type InspectorTab = 'plans' | 'crew' | 'memo'
-
-interface MacShellProps {
+export interface MacShellProps {
   theme: ThemeMode
   onToggleTheme: () => void
-  isDrawerOpen: boolean
-  onToggleDrawer: () => void
-  activeInspectorTab: InspectorTab
-  onSelectInspectorTab: (tab: InspectorTab) => void
-  activeHost: AgentHostId
-  onChangeHost: (host: AgentHostId) => void
-  onSimulatePlan: () => void
-  planCount: number
-  activeSubagentsCount: number
+  currentPlanTitle?: string
+  planCount?: number
+  onSimulatePlan?: () => void
   children: React.ReactNode
-  drawerContent: React.ReactNode
-  footerContent: React.ReactNode
 }
 
 export const MacShell: React.FC<MacShellProps> = ({
   theme,
   onToggleTheme,
-  isDrawerOpen,
-  onToggleDrawer,
-  activeInspectorTab,
-  onSelectInspectorTab,
-  activeHost,
-  onChangeHost,
+  currentPlanTitle,
+  planCount = 0,
   onSimulatePlan,
-  planCount,
-  activeSubagentsCount,
   children,
-  drawerContent,
-  footerContent,
 }) => {
   return (
     <div className="mac-window">
-      {/* Titlebar macOS Sequoia */}
+      {/* Titlebar macOS Sequoia Minimal */}
       <header className="mac-titlebar">
-        {/* Left: Window Controls Traffic Lights & Host Select */}
+        {/* Left: Traffic Lights & Brand */}
         <div className="mac-titlebar-left">
           <div className="mac-traffic-lights">
             <span
@@ -60,137 +42,83 @@ export const MacShell: React.FC<MacShellProps> = ({
             />
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '12px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--mac-text-muted)' }}>Host:</span>
-            <select
-              className="mac-select"
-              value={activeHost}
-              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onChangeHost(e.target.value as AgentHostId)}
-              title="Cambiar orquestador activo para nuevas sesiones"
-            >
-              {SUPPORTED_AGENT_HOSTS.map((h) => (
-                <option key={h} value={h}>
-                  {h}
-                </option>
-              ))}
-            </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
+            <span className="brand-badge">deckseb</span>
+            <span className="mac-title-badge">Plan Viewer</span>
           </div>
         </div>
 
-        {/* Center: Title & Project Badge */}
+        {/* Center: Current Plan Title or Context */}
         <div className="mac-titlebar-center">
-          <span>deckseb</span>
-          <span className="mac-title-badge">Tactical Deck • Sequoia</span>
+          {currentPlanTitle ? (
+            <span
+              style={{
+                fontWeight: 600,
+                color: 'var(--mac-text-primary)',
+                maxWidth: '460px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={currentPlanTitle}
+            >
+              📋 {currentPlanTitle}
+            </span>
+          ) : (
+            <span style={{ color: 'var(--mac-text-muted)' }}>
+              Visor Editorial de Planes ({planCount} {planCount === 1 ? 'artefacto' : 'artefactos'})
+            </span>
+          )}
         </div>
 
-        {/* Right: Inspector Tab Switcher, Fast Plan Trigger & Theme Toggle */}
+        {/* Right: Live Pulse, Plan Simulator & Theme Toggle */}
         <div className="mac-titlebar-right">
-          {/* Quick Plan Simulation */}
-          <button
-            className="mac-primary-btn"
-            onClick={onSimulatePlan}
-            title="Disparar simulación de plan y abrir drawer lateral automáticamente"
+          {/* Live Indicator */}
+          <div
+            className="host-status-chip"
+            title="Escuchando planes y diagramas generados en tiempo real"
+            style={{ cursor: 'default' }}
           >
-            <span>⚡</span>
-            <span>Simular Plan</span>
-          </button>
-
-          {/* Segmented Control for Inspector Tabs */}
-          <div className="mac-segmented-control">
-            <button
-              className={`mac-segment-btn ${
-                isDrawerOpen && activeInspectorTab === 'plans' ? 'active' : ''
-              }`}
-              onClick={() => {
-                onSelectInspectorTab('plans')
-                if (!isDrawerOpen) onToggleDrawer()
-              }}
-              title="Ver Planes y diagramas Mermaid"
-            >
-              <span>📋 Planes</span>
-              {planCount > 0 && (
-                <span
-                  style={{
-                    fontSize: '10px',
-                    padding: '1px 5px',
-                    borderRadius: '8px',
-                    background: 'var(--mac-accent)',
-                    color: '#fff',
-                  }}
-                >
-                  {planCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              className={`mac-segment-btn ${
-                isDrawerOpen && activeInspectorTab === 'crew' ? 'active' : ''
-              }`}
-              onClick={() => {
-                onSelectInspectorTab('crew')
-                if (!isDrawerOpen) onToggleDrawer()
-              }}
-              title="Monitor de subagentes crewseb"
-            >
-              <span>👥 Crew</span>
-              {activeSubagentsCount > 0 && (
-                <span
-                  style={{
-                    fontSize: '10px',
-                    padding: '1px 5px',
-                    borderRadius: '8px',
-                    background: 'var(--mac-color-healthy)',
-                    color: '#fff',
-                  }}
-                >
-                  {activeSubagentsCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              className={`mac-segment-btn ${
-                isDrawerOpen && activeInspectorTab === 'memo' ? 'active' : ''
-              }`}
-              onClick={() => {
-                onSelectInspectorTab('memo')
-                if (!isDrawerOpen) onToggleDrawer()
-              }}
-              title="Monitor de bóveda memoseb"
-            >
-              <span>🧠 Memo</span>
-            </button>
+            <span className="status-dot-pulse" />
+            <span style={{ color: 'var(--mac-text-secondary)', fontWeight: 500 }}>En vivo</span>
           </div>
 
-          {/* Toggle Drawer Open/Close */}
-          <button
-            className={`mac-icon-btn ${isDrawerOpen ? 'active' : ''}`}
-            onClick={onToggleDrawer}
-            title={isDrawerOpen ? 'Colapsar panel lateral' : 'Desplegar panel lateral'}
-          >
-            {isDrawerOpen ? '⇥' : '⇤'}
-          </button>
+          {/* Quick Simulated Plan for Testing */}
+          {onSimulatePlan && (
+            <button
+              className="mac-primary-btn"
+              onClick={onSimulatePlan}
+              title="Generar plan táctico simulado para probar el visor"
+              style={{ fontSize: '11px', padding: '4px 10px' }}
+            >
+              <span>⚡ Simular Plan</span>
+            </button>
+          )}
 
           {/* Theme Toggle (Light / Dark) */}
           <button
             className="mac-icon-btn"
             onClick={onToggleTheme}
             title={theme === 'dark' ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}
+            aria-label="Toggle theme"
           >
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
         </div>
       </header>
 
-      {/* Main Split Body: Terminal + Lateral Inspector */}
-      <main className="mac-workspace">
-        <section className="mac-main-content">{children}</section>
-        {isDrawerOpen && drawerContent}
+      {/* Main Full-Screen Reading Workspace */}
+      <main
+        className="mac-workspace"
+        style={{
+          display: 'flex',
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
+      >
+        {children}
       </main>
-
-      {/* Footer Telemetry */}
-      {footerContent}
     </div>
   )
 }

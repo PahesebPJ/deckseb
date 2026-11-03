@@ -8,11 +8,10 @@ import {
 } from '../../types/deck'
 import { deckClient } from '../../services/deckClient'
 
-interface PlanDrawerProps {
-  isOpen: boolean
-  onClose: () => void
-  autoOpenOnPlan: boolean
-  onToggleAutoOpen: () => void
+export interface PlanDrawerProps {
+  onActivePlanChange?: (plan: DetectedArtifact | null) => void
+  isOpen?: boolean
+  onClose?: () => void
 }
 
 /**
@@ -36,8 +35,8 @@ function renderMermaidVisual(mermaidCode: string): React.ReactNode {
   const nodesMap = new Map<string, string>()
   const edges: ParsedEdge[] = []
 
-  // Simple parser for statements like: A["Label"] --> B["Label B"] or A --> B
-  const linkRegex = /([a-zA-Z0-9_\-]+)(?:\["([^"]+)"\])?\s*(-->|---|-.->)\s*(?:\|([^|]+)\|)?\s*([a-zA-Z0-9_\-]+)(?:\["([^"]+)"\])?/g
+  const linkRegex =
+    /([a-zA-Z0-9_\-]+)(?:\["([^"]+)"\])?\s*(-->|---|-.->)\s*(?:\|([^|]+)\|)?\s*([a-zA-Z0-9_\-]+)(?:\["([^"]+)"\])?/g
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i] ?? ''
@@ -60,7 +59,15 @@ function renderMermaidVisual(mermaidCode: string): React.ReactNode {
 
   if (nodesMap.size === 0) {
     return (
-      <pre style={{ margin: 0, fontSize: '11px', color: 'var(--mac-text-secondary)' }}>
+      <pre
+        style={{
+          margin: 0,
+          fontSize: '11px',
+          color: 'var(--mac-text-secondary)',
+          fontFamily: 'var(--mac-font-mono)',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
         {mermaidCode}
       </pre>
     )
@@ -75,8 +82,11 @@ function renderMermaidVisual(mermaidCode: string): React.ReactNode {
         flexDirection: isHorizontal ? 'row' : 'column',
         alignItems: 'center',
         gap: '12px',
-        padding: '12px',
+        padding: '16px',
         overflowX: 'auto',
+        background: 'var(--mac-bg-input)',
+        borderRadius: '8px',
+        border: '1px solid var(--mac-border-subtle)',
       }}
     >
       {uniqueNodes.map(([id, label], idx) => (
@@ -86,13 +96,41 @@ function renderMermaidVisual(mermaidCode: string): React.ReactNode {
             style={{
               borderColor: idx === 0 ? 'var(--mac-accent)' : 'var(--mac-border)',
               background: idx === 0 ? 'var(--mac-accent-subtle)' : 'var(--mac-bg-card)',
+              padding: '8px 14px',
+              borderRadius: '8px',
+              minWidth: '120px',
+              textAlign: 'center',
             }}
           >
-            <div style={{ fontSize: '10px', color: 'var(--mac-text-muted)' }}>{id}</div>
-            <div>{label}</div>
+            <div
+              style={{
+                fontSize: '10px',
+                color: 'var(--mac-text-muted)',
+                fontFamily: 'var(--mac-font-mono)',
+              }}
+            >
+              {id}
+            </div>
+            <div
+              style={{
+                fontWeight: 600,
+                fontSize: '12px',
+                color: 'var(--mac-text-primary)',
+                marginTop: '2px',
+              }}
+            >
+              {label}
+            </div>
           </div>
           {idx < uniqueNodes.length - 1 && (
-            <div className="diagram-arrow" style={{ transform: isHorizontal ? 'rotate(-90deg)' : 'none' }}>
+            <div
+              className="diagram-arrow"
+              style={{
+                transform: isHorizontal ? 'rotate(-90deg)' : 'none',
+                color: 'var(--mac-accent)',
+                fontSize: '16px',
+              }}
+            >
               <span>↓</span>
             </div>
           )}
@@ -102,12 +140,151 @@ function renderMermaidVisual(mermaidCode: string): React.ReactNode {
   )
 }
 
-export const PlanDrawer: React.FC<PlanDrawerProps> = ({
-  isOpen,
-  onClose,
-  autoOpenOnPlan,
-  onToggleAutoOpen,
-}) => {
+function renderInlineMarkdown(text: string): React.ReactNode {
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={i}
+          style={{
+            fontFamily: 'var(--mac-font-mono)',
+            fontSize: '11.5px',
+            background: 'var(--mac-bg-chip)',
+            padding: '2px 5px',
+            borderRadius: '4px',
+            color: 'var(--mac-accent)',
+          }}
+        >
+          {part.slice(1, -1)}
+        </code>
+      )
+    }
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={i} style={{ color: 'var(--mac-text-primary)' }}>
+          {part.slice(2, -2)}
+        </strong>
+      )
+    }
+    return part
+  })
+}
+
+function renderMarkdownBody(content: string): React.ReactNode {
+  const lines = content.split('\n')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      {lines.map((line, idx) => {
+        const trimmed = line.trim()
+        if (trimmed.startsWith('# ')) {
+          return (
+            <h1
+              key={idx}
+              style={{
+                fontSize: '20px',
+                fontWeight: 700,
+                margin: '12px 0 6px 0',
+                color: 'var(--mac-text-primary)',
+              }}
+            >
+              {trimmed.replace(/^#\s*/, '')}
+            </h1>
+          )
+        }
+        if (trimmed.startsWith('## ')) {
+          return (
+            <h2
+              key={idx}
+              style={{
+                fontSize: '16px',
+                fontWeight: 700,
+                margin: '10px 0 4px 0',
+                color: 'var(--mac-text-primary)',
+              }}
+            >
+              {trimmed.replace(/^##\s*/, '')}
+            </h2>
+          )
+        }
+        if (trimmed.startsWith('### ')) {
+          return (
+            <h3
+              key={idx}
+              style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                margin: '8px 0 4px 0',
+                color: 'var(--mac-accent)',
+              }}
+            >
+              {trimmed.replace(/^###\s*/, '')}
+            </h3>
+          )
+        }
+        if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+          return (
+            <div
+              key={idx}
+              style={{
+                display: 'flex',
+                gap: '8px',
+                paddingLeft: '8px',
+                color: 'var(--mac-text-secondary)',
+                fontSize: '13px',
+                lineHeight: 1.6,
+              }}
+            >
+              <span style={{ color: 'var(--mac-accent)' }}>•</span>
+              <div>{renderInlineMarkdown(trimmed.replace(/^[-*]\s*/, ''))}</div>
+            </div>
+          )
+        }
+        if (/^\d+\.\s/.test(trimmed)) {
+          const num = trimmed.match(/^(\d+)\.\s/)?.[1]
+          return (
+            <div
+              key={idx}
+              style={{
+                display: 'flex',
+                gap: '8px',
+                paddingLeft: '8px',
+                color: 'var(--mac-text-secondary)',
+                fontSize: '13px',
+                lineHeight: 1.6,
+              }}
+            >
+              <span style={{ color: 'var(--mac-accent)', fontWeight: 600 }}>{num}.</span>
+              <div>{renderInlineMarkdown(trimmed.replace(/^\d+\.\s*/, ''))}</div>
+            </div>
+          )
+        }
+        if (trimmed === '') {
+          return <div key={idx} style={{ height: '6px' }} />
+        }
+        // Skip raw mermaid block in text since rendered below
+        if (trimmed.startsWith('```mermaid') || trimmed === '```') {
+          return null
+        }
+        return (
+          <p
+            key={idx}
+            style={{
+              margin: 0,
+              fontSize: '13px',
+              lineHeight: 1.65,
+              color: 'var(--mac-text-secondary)',
+            }}
+          >
+            {renderInlineMarkdown(trimmed)}
+          </p>
+        )
+      })}
+    </div>
+  )
+}
+
+export const PlanDrawer: React.FC<PlanDrawerProps> = ({ onActivePlanChange }) => {
   const [artifacts, setArtifacts] = useState<DetectedArtifact[]>([])
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null)
   const [selectedSegment, setSelectedSegment] = useState<ArtifactSegment | 'all'>('all')
@@ -115,7 +292,6 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [viewRawMermaid, setViewRawMermaid] = useState<boolean>(false)
 
-  // Load artifacts
   const refreshArtifacts = () => {
     deckClient.listArtifacts().then((list) => {
       setArtifacts(list)
@@ -135,6 +311,7 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({
       if (art.memosebCategory) {
         setSelectedCategory(art.memosebCategory)
       }
+      onActivePlanChange?.(art)
     })
 
     return unsub
@@ -148,52 +325,99 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({
     artifacts.find((a) => a.id === selectedArtifactId) ||
     (filteredArtifacts.length > 0 ? filteredArtifacts[0] : null)
 
+  useEffect(() => {
+    if (activeArtifact) {
+      onActivePlanChange?.(activeArtifact)
+    }
+  }, [activeArtifact?.id])
+
   const handleSyncToMemoseb = async () => {
     if (!activeArtifact) return
-    setSyncStatus('Sincronizando con vault.db...')
+    setSyncStatus('Sincronizando con vault.sqlite...')
     const res = await deckClient.syncArtifactToMemoseb(
       activeArtifact.id,
       selectedCategory,
       activeArtifact.title
     )
     if (res.success) {
-      setSyncStatus(`✔ Sincronizado en memoseb (ID: ${res.memoryId})`)
-      refreshArtifacts()
+      setSyncStatus(`✔ Sincronizado en memoseb (ID: ${res.memoryId || 'mem-saved'})`)
+      activeArtifact.syncedToMemoseb = true
+      activeArtifact.memosebCategory = selectedCategory
+      setArtifacts([...artifacts])
     } else {
-      setSyncStatus(`Error: ${res.error}`)
+      setSyncStatus(`Error: ${res.error || 'falló la sincronización'}`)
     }
     setTimeout(() => setSyncStatus(null), 4000)
   }
 
   return (
-    <div className={`mac-drawer ${!isOpen ? 'collapsed' : ''}`}>
-      {/* Drawer Header */}
-      <div className="mac-drawer-header">
-        <div className="mac-drawer-title">
-          <span>📋 Planes & Diagramas</span>
-          <span className="badge-segment">{activeArtifact?.segment || 'plans'}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <button
-            className={`mac-segment-btn ${autoOpenOnPlan ? 'active' : ''}`}
-            onClick={onToggleAutoOpen}
-            title="Auto-abrir drawer al detectar planes nuevos o diagramas Mermaid"
-            style={{ fontSize: '11px', padding: '2px 8px' }}
+    <div
+      style={{
+        display: 'flex',
+        flex: 1,
+        width: '100%',
+        height: '100%',
+        minHeight: 0,
+        overflow: 'hidden',
+        background: 'var(--bento-bg-root)',
+      }}
+    >
+      {/* Left Sidebar: Recent Plans Selector & Segment Filters */}
+      <aside
+        style={{
+          width: '320px',
+          minWidth: '320px',
+          borderRight: '1px solid var(--bento-border)',
+          background: 'var(--bento-surface)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Sidebar Header */}
+        <div
+          style={{
+            padding: '14px 16px',
+            borderBottom: '1px solid var(--bento-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '15px' }}>📑</span>
+            <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--mac-text-primary)' }}>
+              Artefactos Detectados
+            </span>
+          </div>
+          <span
+            style={{
+              fontSize: '11px',
+              padding: '2px 8px',
+              borderRadius: '999px',
+              background: 'var(--mac-bg-chip)',
+              color: 'var(--mac-text-secondary)',
+              fontWeight: 600,
+            }}
           >
-            Auto-open {autoOpenOnPlan ? 'ON' : 'OFF'}
-          </button>
-          <button className="mac-icon-btn" onClick={onClose} title="Cerrar panel lateral">
-            ✕
-          </button>
+            {artifacts.length}
+          </span>
         </div>
-      </div>
 
-      {/* Segment Tabs */}
-      <div style={{ padding: '8px 16px 0 16px' }}>
-        <div className="plan-segment-tabs">
+        {/* Segment Filter Tabs */}
+        <div
+          style={{
+            padding: '10px 12px 6px 12px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '6px',
+            borderBottom: '1px solid var(--mac-border-subtle)',
+          }}
+        >
           <button
             className={`plan-segment-tab ${selectedSegment === 'all' ? 'active' : ''}`}
             onClick={() => setSelectedSegment('all')}
+            style={{ fontSize: '11px', padding: '3px 8px' }}
           >
             Todos ({artifacts.length})
           </button>
@@ -204,99 +428,279 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({
                 key={seg}
                 className={`plan-segment-tab ${selectedSegment === seg ? 'active' : ''}`}
                 onClick={() => setSelectedSegment(seg)}
+                style={{ fontSize: '11px', padding: '3px 8px' }}
               >
                 {seg}/ ({count})
               </button>
             )
           })}
         </div>
-      </div>
 
-      {/* Artifacts List or Dropdown */}
-      {filteredArtifacts.length > 1 && (
-        <div style={{ padding: '8px 16px 0 16px' }}>
-          <select
-            className="mac-select"
-            style={{ width: '100%' }}
-            value={activeArtifact?.id || ''}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedArtifactId(e.target.value)}
-          >
-            {filteredArtifacts.map((art) => (
-              <option key={art.id} value={art.id}>
-                [{art.segment}] {art.title} {art.syncedToMemoseb ? '✔ memoseb' : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {/* Drawer Content */}
-      <div className="mac-drawer-content">
-        {activeArtifact ? (
-          <div className="artifact-card">
-            {/* Header info */}
-            <div className="artifact-header">
-              <div>
-                <div className="artifact-title">{activeArtifact.title}</div>
-                <div className="artifact-meta" style={{ marginTop: '4px' }}>
-                  <span>📁 {activeArtifact.filePath}</span>
-                  <span>•</span>
-                  <span>{new Date(activeArtifact.detectedAt).toLocaleTimeString()}</span>
-                </div>
-              </div>
-              <div>
-                {activeArtifact.syncedToMemoseb ? (
-                  <span
+        {/* List of Plans */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}
+        >
+          {filteredArtifacts.length === 0 ? (
+            <div
+              style={{
+                textAlign: 'center',
+                padding: '30px 10px',
+                color: 'var(--mac-text-muted)',
+                fontSize: '12px',
+              }}
+            >
+              No hay planes en este segmento.
+            </div>
+          ) : (
+            filteredArtifacts.map((art) => {
+              const isSelected = activeArtifact?.id === art.id
+              return (
+                <div
+                  key={art.id}
+                  onClick={() => setSelectedArtifactId(art.id)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    background: isSelected ? 'var(--bento-header-bg)' : 'var(--bento-surface-subtle)',
+                    border: isSelected
+                      ? '1px solid var(--bento-accent-cyan)'
+                      : '1px solid var(--bento-border)',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <div
                     style={{
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      fontSize: '10px',
-                      fontWeight: 600,
-                      background: 'var(--mac-color-healthy-subtle)',
-                      color: 'var(--mac-color-healthy)',
-                      border: '1px solid var(--mac-color-healthy)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: '4px',
                     }}
                   >
-                    ✔ Memoseb
-                  </span>
-                ) : (
-                  <span
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        color: 'var(--mac-accent)',
+                        letterSpacing: '0.4px',
+                      }}
+                    >
+                      {art.segment}
+                    </span>
+                    {art.syncedToMemoseb && (
+                      <span
+                        style={{
+                          fontSize: '10px',
+                          color: 'var(--mac-color-healthy)',
+                          fontWeight: 600,
+                        }}
+                      >
+                        ✔ memoseb
+                      </span>
+                    )}
+                  </div>
+                  <div
                     style={{
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      fontSize: '10px',
+                      fontSize: '12.5px',
                       fontWeight: 600,
-                      background: 'var(--mac-bg-chip)',
+                      color: isSelected ? 'var(--mac-text-primary)' : 'var(--mac-text-secondary)',
+                      lineHeight: 1.35,
+                      marginBottom: '6px',
+                    }}
+                  >
+                    {art.title}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '10.5px',
                       color: 'var(--mac-text-muted)',
+                      fontFamily: 'var(--mac-font-mono)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     }}
                   >
-                    Pendiente
+                    {art.filePath}
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </aside>
+
+      {/* Right Column: Editorial Plan Reading Pane */}
+      <section
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          background: 'var(--mac-bg-window)',
+        }}
+      >
+        {activeArtifact ? (
+          <div
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '24px 36px',
+              maxWidth: '920px',
+              margin: '0 auto',
+              width: '100%',
+              boxSizing: 'border-box',
+            }}
+          >
+            {/* Editorial Document Header */}
+            <div
+              style={{
+                borderBottom: '1px solid var(--mac-border-subtle)',
+                paddingBottom: '16px',
+                marginBottom: '20px',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  marginBottom: '8px',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    color: 'var(--mac-accent)',
+                    background: 'var(--mac-accent-subtle)',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                  }}
+                >
+                  {activeArtifact.segment}
+                </span>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontFamily: 'var(--mac-font-mono)',
+                    color: 'var(--mac-text-muted)',
+                  }}
+                >
+                  {activeArtifact.filePath}
+                </span>
+                <span style={{ color: 'var(--mac-text-muted)' }}>•</span>
+                <span style={{ fontSize: '11px', color: 'var(--mac-text-muted)' }}>
+                  {new Date(activeArtifact.detectedAt).toLocaleTimeString()}
+                </span>
+              </div>
+
+              <h1
+                style={{
+                  fontSize: '24px',
+                  fontWeight: 700,
+                  margin: '4px 0 14px 0',
+                  color: 'var(--mac-text-primary)',
+                  lineHeight: 1.3,
+                }}
+              >
+                {activeArtifact.title}
+              </h1>
+
+              {/* Memoseb Sync Toolbar */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  background: 'var(--bento-surface-subtle)',
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--bento-border)',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    color: 'var(--mac-text-secondary)',
+                  }}
+                >
+                  Sincronización memoseb:
+                </span>
+                <select
+                  className="mac-select"
+                  value={selectedCategory}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                    setSelectedCategory(e.target.value as MemosebCategory)
+                  }
+                  style={{ fontSize: '11.5px', padding: '3px 8px' }}
+                >
+                  {MEMOSEB_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="mac-primary-btn"
+                  onClick={handleSyncToMemoseb}
+                  style={{ fontSize: '11px', padding: '4px 10px' }}
+                >
+                  <span>📥</span>
+                  <span>{activeArtifact.syncedToMemoseb ? 'Re-sincronizar' : 'Enviar a memoseb'}</span>
+                </button>
+                {syncStatus && (
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      color: syncStatus.startsWith('Error')
+                        ? 'var(--mac-color-critical)'
+                        : 'var(--mac-color-healthy)',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {syncStatus}
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Markdown Body */}
+            {/* Markdown Body Content */}
             <div
               style={{
-                fontSize: '12px',
-                lineHeight: 1.6,
-                color: 'var(--mac-text-secondary)',
-                whiteSpace: 'pre-wrap',
-                background: 'var(--mac-bg-input)',
-                padding: '10px',
-                borderRadius: '6px',
-                border: '1px solid var(--mac-border-subtle)',
-                maxHeight: '220px',
-                overflowY: 'auto',
+                marginBottom: '28px',
+                background: 'var(--bento-surface-card)',
+                padding: '20px 24px',
+                borderRadius: '12px',
+                border: '1px solid var(--bento-border)',
               }}
             >
-              {activeArtifact.content}
+              {renderMarkdownBody(activeArtifact.content)}
             </div>
 
-            {/* Mermaid Diagram Blocks */}
+            {/* Mermaid Diagrams Section */}
             {activeArtifact.mermaidBlocks && activeArtifact.mermaidBlocks.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                  marginBottom: '32px',
+                  background: 'var(--bento-surface-card)',
+                  padding: '20px 24px',
+                  borderRadius: '12px',
+                  border: '1px solid var(--bento-border)',
+                }}
+              >
                 <div
                   style={{
                     display: 'flex',
@@ -304,15 +708,24 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({
                     justifyContent: 'space-between',
                   }}
                 >
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--mac-text-primary)' }}>
-                    📊 Diagrama Mermaid Detectado
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '15px' }}>📊</span>
+                    <span
+                      style={{
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        color: 'var(--mac-text-primary)',
+                      }}
+                    >
+                      Diagrama Arquitectónico Mermaid ({activeArtifact.mermaidBlocks.length})
+                    </span>
+                  </div>
                   <button
                     className="mac-segment-btn"
-                    style={{ fontSize: '10px', padding: '2px 6px' }}
+                    style={{ fontSize: '11px', padding: '3px 10px' }}
                     onClick={() => setViewRawMermaid(!viewRawMermaid)}
                   >
-                    {viewRawMermaid ? 'Ver Gráfico' : 'Ver Código Raw'}
+                    {viewRawMermaid ? 'Ver Gráfico Visual' : 'Ver Código Raw'}
                   </button>
                 </div>
 
@@ -324,85 +737,47 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({
                         fontFamily: 'var(--mac-font-mono)',
                         fontSize: '11px',
                         color: 'var(--mac-text-primary)',
+                        background: 'var(--mac-bg-input)',
+                        padding: '14px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--mac-border-subtle)',
+                        whiteSpace: 'pre-wrap',
                       }}
                     >
                       {activeArtifact.mermaidBlocks.join('\n\n')}
                     </pre>
                   ) : (
                     activeArtifact.mermaidBlocks.map((blk, idx) => (
-                      <div key={idx}>{renderMermaidVisual(blk)}</div>
+                      <div key={idx} style={{ marginBottom: idx > 0 ? '12px' : '0' }}>
+                        {renderMermaidVisual(blk)}
+                      </div>
                     ))
                   )}
                 </div>
               </div>
             )}
-
-            {/* Memoseb Sync Controls */}
-            <div
-              style={{
-                marginTop: '8px',
-                paddingTop: '12px',
-                borderTop: '1px solid var(--mac-border-subtle)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px',
-              }}
-            >
-              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--mac-text-primary)' }}>
-                Sincronización con memoseb
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <label style={{ fontSize: '11px', color: 'var(--mac-text-secondary)' }}>Categoría:</label>
-                <select
-                  className="mac-select"
-                  style={{ flex: 1 }}
-                  value={selectedCategory}
-                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedCategory(e.target.value as MemosebCategory)}
-                >
-                  {MEMOSEB_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-                <button className="mac-primary-btn" onClick={handleSyncToMemoseb}>
-                  <span>📥</span>
-                  <span>Enviar a memoseb</span>
-                </button>
-              </div>
-
-              {syncStatus && (
-                <div
-                  style={{
-                    fontSize: '11px',
-                    color: syncStatus.startsWith('Error')
-                      ? 'var(--mac-color-critical)'
-                      : 'var(--mac-color-healthy)',
-                    fontWeight: 500,
-                  }}
-                >
-                  {syncStatus}
-                </div>
-              )}
-            </div>
           </div>
         ) : (
           <div
             style={{
-              textAlign: 'center',
-              padding: '40px 20px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100%',
               color: 'var(--mac-text-muted)',
             }}
           >
-            <div style={{ fontSize: '24px', marginBottom: '8px' }}>📑</div>
-            <div>No hay artefactos en este segmento.</div>
-            <div style={{ fontSize: '11px', marginTop: '4px' }}>
-              Escribe <code style={{ color: 'var(--mac-accent)' }}>/plan</code> en la terminal para
-              generar uno nuevo.
+            <div style={{ fontSize: '32px', marginBottom: '10px' }}>📑</div>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--mac-text-secondary)' }}>
+              Sin planes seleccionados
+            </div>
+            <div style={{ fontSize: '12px', marginTop: '6px' }}>
+              Pulsa <code style={{ color: 'var(--mac-accent)' }}>⚡ Simular Plan</code> en la barra superior para generar uno de prueba.
             </div>
           </div>
         )}
-      </div>
+      </section>
     </div>
   )
 }
