@@ -35,7 +35,8 @@ export interface UiServerInstance {
   close: () => Promise<void>
   publishPlan: (
     artifact: DetectedArtifact,
-    eventType?: 'plan:created' | 'plan:updated'
+    eventType?: 'plan:created' | 'plan:updated',
+    silent?: boolean
   ) => Promise<void>
   getPlans: () => DetectedArtifact[]
   getActivePlan: () => DetectedArtifact | null
@@ -811,13 +812,14 @@ export async function startUiServer(
 
   let activePlan: DetectedArtifact | null = memoryPlans[0] || null
   const sseClients = new Set<http.ServerResponse>()
-  let hasOpenedWindow = false
+  let lastWindowOpenAt = 0
   let actualUrl = `http://${host}:${port}`
 
   // Function to broadcast and record plans
   const publishPlan = async (
     artifact: DetectedArtifact,
-    eventType: 'plan:created' | 'plan:updated' = 'plan:created'
+    eventType: 'plan:created' | 'plan:updated' = 'plan:created',
+    silent = false
   ): Promise<void> => {
     // 1. Save in vault
     try {
@@ -848,8 +850,9 @@ export async function startUiServer(
     }
 
     // 4. Auto-open window if requested
-    if (autoOpenOnPlan && !hasOpenedWindow) {
-      hasOpenedWindow = true
+    const now = Date.now()
+    if (!silent && autoOpenOnPlan && sseClients.size === 0 && now - lastWindowOpenAt > 1500) {
+      lastWindowOpenAt = now
       launchStandaloneDesktopWindow(actualUrl, openBrowser)
     }
   }
@@ -1050,18 +1053,19 @@ export async function startUiServer(
     }
   }
 
-  // Open window at startup if requested or if already have a plan
-  if (openWindow || (autoOpenOnPlan && activePlan)) {
-    hasOpenedWindow = true
+  // Open window at startup if explicitly requested
+  if (openWindow && Date.now() - lastWindowOpenAt > 1500) {
+    lastWindowOpenAt = Date.now()
     launchStandaloneDesktopWindow(actualUrl, openBrowser)
   }
 
-  // --- Lightweight Plan Poller (800ms) ---
+  // --- Lightweight Plan Poller (600ms) ---
   const fileCache = new Map<string, { mtime: number; size: number }>()
   const candidateDirs = new Set<string>()
   const homeDir = options?.homeDir ?? os.homedir()
   const disableAutoPoll = options?.disableAutoPoll ?? false
   let isClosed = false
+  let isInitialScan = true
   let activePollPromise: Promise<void> | null = null
 
   if (options?.watchDirs && Array.isArray(options.watchDirs)) {
@@ -1074,13 +1078,22 @@ export async function startUiServer(
     candidateDirs.add(antigravityBrain)
   }
 
+  interface CandidateFile {
+    full: string
+    mtime: number
+    size: number
+    isUpdate: boolean
+  }
+
   const pollPlans = async (): Promise<void> => {
     if (isClosed || disableAutoPoll) return
+    const candidates: CandidateFile[] = []
+
     for (const baseDir of candidateDirs) {
       if (isClosed) return
       if (!existsSync(baseDir)) continue
 
-      const scanDirectory = async (dir: string, depth = 0): Promise<void> => {
+      const scanDirectory = (dir: string, depth = 0): void => {
         if (isClosed || depth > 2) return
         try {
           const entries = readdirSync(dir, { withFileTypes: true })
@@ -1093,27 +1106,22 @@ export async function startUiServer(
                 entry.name !== '.git' &&
                 entry.name !== 'dist'
               ) {
-                await scanDirectory(full, depth + 1)
+                scanDirectory(full, depth + 1)
               }
             } else if (entry.isFile() && entry.name.endsWith('.md')) {
               try {
                 const st = statSync(full)
                 const cached = fileCache.get(full)
                 if (!cached || cached.mtime !== st.mtimeMs || cached.size !== st.size) {
-                  fileCache.set(full, { mtime: st.mtimeMs, size: st.size })
-                  const content = readFileSync(full, 'utf8')
-                  const detected = detectPlanInStream(
-                    'watcher-session',
-                    'active-project',
-                    content,
-                    full
-                  )
-                  if (detected && !isClosed) {
-                    await publishPlan(detected, cached ? 'plan:updated' : 'plan:created')
-                  }
+                  candidates.push({
+                    full,
+                    mtime: st.mtimeMs,
+                    size: st.size,
+                    isUpdate: Boolean(cached),
+                  })
                 }
               } catch {
-                // Ignore transient file read errors during concurrent agent writes
+                // Ignore transient file stat errors during concurrent agent writes
               }
             }
           }
@@ -1122,7 +1130,46 @@ export async function startUiServer(
         }
       }
 
-      await scanDirectory(baseDir, 0)
+      scanDirectory(baseDir, 0)
+    }
+
+    if (candidates.length === 0 || isClosed) {
+      if (isInitialScan) isInitialScan = false
+      return
+    }
+
+    // Sort ascending by mtimeMs so the most recently modified file is processed last and remains activePlan
+    candidates.sort((a, b) => a.mtime - b.mtime)
+
+    for (const candidate of candidates) {
+      if (isClosed) return
+      try {
+        fileCache.set(candidate.full, { mtime: candidate.mtime, size: candidate.size })
+        const content = readFileSync(candidate.full, 'utf8')
+        const detected = detectPlanInStream(
+          'watcher-session',
+          'active-project',
+          content,
+          candidate.full
+        )
+        if (detected && !isClosed) {
+          if (isInitialScan) {
+            await publishPlan(detected, 'plan:created', true)
+          } else {
+            await publishPlan(
+              detected,
+              candidate.isUpdate ? 'plan:updated' : 'plan:created',
+              false
+            )
+          }
+        }
+      } catch {
+        // Ignore transient file read errors during concurrent agent writes
+      }
+    }
+
+    if (isInitialScan) {
+      isInitialScan = false
     }
   }
 
@@ -1133,7 +1180,7 @@ export async function startUiServer(
       if (!isClosed) {
         activePollPromise = pollPlans().catch(() => {})
       }
-    }, 800)
+    }, 600)
     pollTimer.unref()
   }
 

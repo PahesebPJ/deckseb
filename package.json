@@ -1,7 +1,16 @@
 {
   "name": "deckseb",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Minimalist instant plan viewer with live Markdown GFM & Mermaid rendering for *seb ecosystem",
+  "keywords": [
+    "deckseb",
+    "hubseb",
+    "crewseb",
+    "memoseb",
+    "plan-viewer",
+    "mermaid",
+    "markdown"
+  ],
   "license": "MIT",
   "author": "PahesebPJ",
   "homepage": "https://github.com/PahesebPJ/deckseb#readme",

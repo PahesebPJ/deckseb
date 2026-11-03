@@ -8,6 +8,8 @@ import {
   getDefaultTopologyPath,
   isDecksebRegistered,
   registerDecksebNode,
+  startDecksebDaemon,
+  stopDecksebDaemon,
   unregisterDecksebNode,
 } from './setup.ts'
 import {
@@ -20,12 +22,19 @@ function printHelp(): void {
 🪐 ${BUNDLE_ID} v${VERSION} — Visor Editorial Minimalista e Instantáneo de Planes
 
 Uso:
-  deckseb [watch|ui] [--port 4321] [--open] [--browser]
+  deckseb [watch|ui] [--port 4321] [--open] [--browser] [--daemon]
       Inicia el visor en segundo plano, abre la ventana en cuanto un modelo cree
       un plan (*plan*.md) y actualiza la vista en tiempo real vía SSE.
 
-  deckseb <archivo.md> | deckseb show <archivo.md> [--port 4321]
-      Abre de inmediato el plan en la ventana editorial (reutiliza servidor si está activo).
+  deckseb daemon [--port 4321]
+      Arranca el visor como daemon desacoplado en segundo plano y sale.
+
+  deckseb stop
+      Detiene el daemon de deckseb si está en ejecución.
+
+  deckseb <archivo.md> | deckseb show <archivo.md> [--port 4321] [--daemon]
+      Abre de inmediato el plan en la ventana editorial. Si se pasa --daemon
+      (o en subshells no interactivos), arranca el servidor si no existía y termina de inmediato.
 
   deckseb detect <archivo.md> [--json]
       Analiza un archivo e inspecciona bloques Mermaid y clasificación del segmento.
@@ -33,11 +42,11 @@ Uso:
   deckseb status [--json]
       Muestra el estado del visor, puerto activo y registro en la topología de hubseb.
 
-  deckseb setup
-      Registra deckseb en hubseb topology.json como nodo de visualización (ui.deck).
+  deckseb setup [--no-daemon]
+      Registra deckseb en hubseb topology.json y arranca el daemon en segundo plano.
 
   deckseb purge
-      Elimina deckseb de la topología de hubseb.
+      Detiene el daemon de deckseb y lo elimina de la topología de hubseb.
 
   deckseb --version, -v
       Muestra la versión de deckseb.
@@ -150,6 +159,7 @@ async function handleOpenFile(filePath: string, args: string[]): Promise<void> {
 
   const port = extractPort(args, 4321)
   const useBrowser = args.includes('--browser')
+  const runDaemon = args.includes('--daemon') || !process.stdout.isTTY
 
   // 1. Try sending to an already-running server
   try {
@@ -161,14 +171,32 @@ async function handleOpenFile(filePath: string, args: string[]): Promise<void> {
     })
     if (res.ok) {
       console.log(`✨ Plan enviado al visor activo en http://127.0.0.1:${port}`)
-      launchStandaloneDesktopWindow(`http://127.0.0.1:${port}`, useBrowser)
       return
     }
   } catch {
-    // Server is not running; start a new one below
+    // Server is not running; start daemon or foreground server below
   }
 
-  // 2. Start a new server instance with the plan loaded
+  // 2. Start daemon in background if requested or non-interactive
+  if (runDaemon) {
+    console.log(`🚀 Arrancando daemon de deckseb en http://127.0.0.1:${port}...`)
+    await startDecksebDaemon(port)
+    try {
+      await fetch(`http://127.0.0.1:${port}/api/plans`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath: fullPath }),
+        signal: AbortSignal.timeout(1200),
+      })
+      console.log(`✨ Plan abierto en segundo plano en http://127.0.0.1:${port}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`Error al enviar plan al daemon: ${msg}`)
+    }
+    return
+  }
+
+  // 3. Start a new foreground server instance with the plan loaded
   console.log(`\n🚀 Abriendo ${path.basename(fullPath)} en http://127.0.0.1:${port}`)
   const instance = await startUiServer({
     port,
@@ -193,6 +221,29 @@ async function main(): Promise<void> {
 
   if (firstArg === '--version' || firstArg === '-v' || firstArg === 'version') {
     console.log(`${BUNDLE_ID} v${VERSION}`)
+    return
+  }
+
+  if (
+    firstArg === 'daemon' ||
+    ((!firstArg || firstArg === 'watch' || firstArg === 'ui') && args.includes('--daemon'))
+  ) {
+    const result = await startDecksebDaemon(port)
+    if (result.started) {
+      console.log(`🪐 Daemon de deckseb iniciado (PID ${result.pid}) en ${result.url}`)
+    } else {
+      console.log(`🪐 Daemon de deckseb ya está activo en ${result.url}`)
+    }
+    return
+  }
+
+  if (firstArg === 'stop') {
+    const stopped = await stopDecksebDaemon()
+    if (stopped) {
+      console.log(`🛑 Daemon de deckseb detenido`)
+    } else {
+      console.log(`ℹ️ No se encontró ningún daemon de deckseb en ejecución`)
+    }
     return
   }
 
@@ -243,9 +294,18 @@ async function main(): Promise<void> {
     case 'setup': {
       const outcome = await registerDecksebNode()
       console.log(`✅ ${BUNDLE_ID} registrado en ${outcome.topologyFile}`)
+      if (!args.includes('--no-daemon')) {
+        const daemon = await startDecksebDaemon(port)
+        if (daemon.started) {
+          console.log(`🚀 Daemon activo vigilando planes en ${daemon.url} (PID: ${daemon.pid})`)
+        } else {
+          console.log(`ℹ️ Daemon ya activo vigilando planes en ${daemon.url}`)
+        }
+      }
       break
     }
     case 'purge': {
+      await stopDecksebDaemon()
       const outcome = await unregisterDecksebNode()
       if (outcome.removed) {
         console.log(`🧹 ${BUNDLE_ID} eliminado de ${outcome.topologyFile}`)

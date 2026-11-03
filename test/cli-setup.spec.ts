@@ -47,4 +47,16 @@ describe('cli-setup', () => {
       await fs.rm(tmpDir, { recursive: true, force: true })
     }
   })
+
+  it('handles daemon check and stop when no pid exists', async () => {
+    const { getDecksebPidPath, stopDecksebDaemon } = await import(
+      '../src/cli/setup.ts'
+    )
+    const pidPath = getDecksebPidPath()
+    assert.match(pidPath, /deckseb\.pid$/)
+
+    // Stopping when no pid file exists should return false cleanly
+    const stopped = await stopDecksebDaemon()
+    assert.equal(typeof stopped, 'boolean')
+  })
 })

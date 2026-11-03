@@ -1,7 +1,7 @@
 use deckseb_lib::DeckIpcRouter;
 
 fn main() {
-    println!("deckseb-backend v0.1.0 starting (Tauri v2 minimal plan viewer)...");
+    println!("deckseb-backend v0.2.0 starting (Tauri v2 minimal plan viewer)...");
     let router = DeckIpcRouter::new();
     println!("Router initialized with minimal IPC command handlers ready.");
 

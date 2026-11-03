@@ -176,4 +176,66 @@ flowchart TD
       await server2.close()
     }
   })
+
+  it('supports silent publishPlan and orders active plans correctly', async () => {
+    const watchDir = path.join(tempDir, 'watch-test')
+    await fs.mkdir(watchDir, { recursive: true })
+
+    // Create older plan
+    const olderPlan = path.join(watchDir, 'older-plan.md')
+    await fs.writeFile(
+      olderPlan,
+      '# Plan Anterior\n\n```mermaid\ngraph TD\n  A --> B\n```',
+      'utf8'
+    )
+
+    // Wait slightly so mtimes differ
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Create newer plan
+    const newerPlan = path.join(watchDir, 'newer-plan.md')
+    await fs.writeFile(
+      newerPlan,
+      '# Plan Más Reciente\n\n```mermaid\ngraph TD\n  C --> D\n```',
+      'utf8'
+    )
+
+    const server3 = await startUiServer({
+      port: 0,
+      openBrowser: false,
+      openWindow: false,
+      watchDirs: [watchDir],
+      vaultRoot: path.join(tempDir, 'vault3'),
+    })
+
+    try {
+      // Allow initial scan to run
+      await new Promise((r) => setTimeout(r, 200))
+      const active = server3.getActivePlan()
+      assert.ok(active)
+      // The newest plan should be the active plan
+      assert.equal(active?.title, 'Plan Más Reciente')
+
+      // Test publishPlan with silent = true
+      await server3.publishPlan(
+        {
+          id: 'manual-test-id',
+          sessionId: 'test-session',
+          projectSlug: 'test',
+          segment: 'plans',
+          title: 'Plan Manual Silencioso',
+          filePath: path.join(watchDir, 'manual.md'),
+          content: '# Plan Manual Silencioso',
+          mermaidBlocks: [],
+          detectedAt: new Date().toISOString(),
+          syncedToMemoseb: false,
+        },
+        'plan:created',
+        true
+      )
+      assert.equal(server3.getActivePlan()?.title, 'Plan Manual Silencioso')
+    } finally {
+      await server3.close()
+    }
+  })
 })

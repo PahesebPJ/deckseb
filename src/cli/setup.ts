@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
 import os from 'node:os'
@@ -32,6 +33,10 @@ export interface SetupOptions {
 
 export function getDefaultTopologyPath(): string {
   return path.join(os.homedir(), '.config', 'hubseb', 'topology.json')
+}
+
+export function getDecksebPidPath(): string {
+  return path.join(os.homedir(), '.config', 'hubseb', 'deckseb.pid')
 }
 
 export function buildDeckNodeRegistration(): TopologyNode {
@@ -85,6 +90,30 @@ export async function registerDecksebNode(
 
   await fs.writeFile(topologyFile, JSON.stringify(topology, null, 2), 'utf8')
 
+  if (!options?.topologyPath) {
+    try {
+      const rulesDir = path.join(
+        os.homedir(),
+        '.gemini',
+        'config',
+        'plugins',
+        'deckseb',
+        'rules'
+      )
+      await fs.mkdir(rulesDir, { recursive: true })
+      const ruleContent = `# Reglas activas de deckseb en Antigravity
+
+- deckseb es el visor editorial minimalista e instantáneo de planes de la tripulación.
+- Al crear un plan de implementación o ejecutar \`/plan\`, si deseas forzar la apertura visual inmediata del plan en segundo plano, invoca:
+  \`deckseb show <ruta-del-plan.md> --daemon\`
+- Si el visor ya está en ejecución, se actualizará en tiempo real por SSE sin abrir ventanas duplicadas.
+`
+      await fs.writeFile(path.join(rulesDir, 'deckseb.md'), ruleContent, 'utf8')
+    } catch {
+      // Graceful degradation
+    }
+  }
+
   return {
     success: true,
     topologyFile,
@@ -99,6 +128,25 @@ export async function unregisterDecksebNode(
   options?: SetupOptions
 ): Promise<{ success: boolean; removed: boolean; topologyFile: string }> {
   const topologyFile = options?.topologyPath ?? getDefaultTopologyPath()
+
+  if (!options?.topologyPath) {
+    try {
+      const rulePath = path.join(
+        os.homedir(),
+        '.gemini',
+        'config',
+        'plugins',
+        'deckseb',
+        'rules',
+        'deckseb.md'
+      )
+      if (fsSync.existsSync(rulePath)) {
+        await fs.unlink(rulePath)
+      }
+    } catch {
+      // Graceful degradation
+    }
+  }
 
   if (!fsSync.existsSync(topologyFile)) {
     return {
@@ -150,4 +198,107 @@ export async function isDecksebRegistered(
   } catch {
     return false
   }
+}
+
+/**
+ * Starts deckseb UI server daemon in background detached mode.
+ * Reuses existing instance if already healthy on the specified port.
+ */
+export async function startDecksebDaemon(
+  port = 4321
+): Promise<{ started: boolean; pid?: number; url: string }> {
+  const url = `http://127.0.0.1:${port}`
+
+  // 1. Check if server is already running
+  try {
+    const res = await fetch(`${url}/api/plans`, {
+      signal: AbortSignal.timeout(400),
+    })
+    if (res.ok) {
+      let existingPid: number | undefined
+      try {
+        const pidFile = getDecksebPidPath()
+        if (fsSync.existsSync(pidFile)) {
+          const rawPid = fsSync.readFileSync(pidFile, 'utf8').trim()
+          const parsed = parseInt(rawPid, 10)
+          if (!Number.isNaN(parsed)) existingPid = parsed
+        }
+      } catch {}
+      return { started: false, pid: existingPid, url }
+    }
+  } catch {
+    // Not running yet, proceed with spawn
+  }
+
+  // 2. Resolve script executable path
+  const distBin = path.join(PACKAGE_ROOT, 'dist', 'cli', 'deckseb.js')
+  const srcBin = path.join(PACKAGE_ROOT, 'src', 'cli', 'deckseb.ts')
+  const scriptPath = fsSync.existsSync(distBin) ? distBin : srcBin
+
+  const pidFile = getDecksebPidPath()
+  await fs.mkdir(path.dirname(pidFile), { recursive: true })
+
+  const child = spawn(
+    process.execPath,
+    [scriptPath, 'watch', '--port', String(port)],
+    {
+      detached: true,
+      stdio: 'ignore',
+    }
+  )
+
+  const pid = child.pid
+  if (pid) {
+    await fs.writeFile(pidFile, String(pid), 'utf8')
+  }
+  child.unref()
+
+  // 3. Wait up to ~1.2s pinging /api/plans every 150ms
+  const startTime = Date.now()
+  while (Date.now() - startTime < 1200) {
+    try {
+      const ping = await fetch(`${url}/api/plans`, {
+        signal: AbortSignal.timeout(150),
+      })
+      if (ping.ok) {
+        break
+      }
+    } catch {
+      await new Promise((r) => setTimeout(r, 150))
+    }
+  }
+
+  return { started: true, pid, url }
+}
+
+/**
+ * Stops running deckseb daemon by killing the process tracked in deckseb.pid.
+ */
+export async function stopDecksebDaemon(): Promise<boolean> {
+  const pidFile = getDecksebPidPath()
+  if (!fsSync.existsSync(pidFile)) {
+    return false
+  }
+
+  let stopped = false
+  try {
+    const raw = await fs.readFile(pidFile, 'utf8')
+    const pid = parseInt(raw.trim(), 10)
+    if (!Number.isNaN(pid) && pid > 0) {
+      try {
+        process.kill(pid, 'SIGTERM')
+        stopped = true
+      } catch {
+        // Process might already be stopped
+      }
+    }
+  } catch {
+    // Ignore read error
+  } finally {
+    try {
+      await fs.unlink(pidFile)
+    } catch {}
+  }
+
+  return stopped
 }
