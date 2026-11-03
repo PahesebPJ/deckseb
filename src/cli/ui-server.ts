@@ -24,6 +24,8 @@ export interface UiServerOptions {
   initialPlanFile?: string
   watchDirs?: string[]
   vaultRoot?: string
+  homeDir?: string
+  disableAutoPoll?: boolean
 }
 
 export interface UiServerInstance {
@@ -1057,26 +1059,33 @@ export async function startUiServer(
   // --- Lightweight Plan Poller (800ms) ---
   const fileCache = new Map<string, { mtime: number; size: number }>()
   const candidateDirs = new Set<string>()
+  const homeDir = options?.homeDir ?? os.homedir()
+  const disableAutoPoll = options?.disableAutoPoll ?? false
+  let isClosed = false
+  let activePollPromise: Promise<void> | null = null
 
   if (options?.watchDirs && Array.isArray(options.watchDirs)) {
     for (const d of options.watchDirs) candidateDirs.add(path.resolve(d))
   }
   candidateDirs.add(path.resolve(process.cwd(), 'plans'))
   candidateDirs.add(path.resolve(process.cwd(), 'docs', 'plans'))
-  const antigravityBrain = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain')
+  const antigravityBrain = path.join(homeDir, '.gemini', 'antigravity-cli', 'brain')
   if (existsSync(antigravityBrain)) {
     candidateDirs.add(antigravityBrain)
   }
 
   const pollPlans = async (): Promise<void> => {
+    if (isClosed || disableAutoPoll) return
     for (const baseDir of candidateDirs) {
+      if (isClosed) return
       if (!existsSync(baseDir)) continue
 
       const scanDirectory = async (dir: string, depth = 0): Promise<void> => {
-        if (depth > 2) return
+        if (isClosed || depth > 2) return
         try {
           const entries = readdirSync(dir, { withFileTypes: true })
           for (const entry of entries) {
+            if (isClosed) return
             const full = path.join(dir, entry.name)
             if (entry.isDirectory()) {
               if (
@@ -1099,7 +1108,7 @@ export async function startUiServer(
                     content,
                     full
                   )
-                  if (detected) {
+                  if (detected && !isClosed) {
                     await publishPlan(detected, cached ? 'plan:updated' : 'plan:created')
                   }
                 }
@@ -1117,12 +1126,16 @@ export async function startUiServer(
     }
   }
 
-  // Initial poll run
-  pollPlans().catch(() => {})
-  const pollTimer = setInterval(() => {
-    pollPlans().catch(() => {})
-  }, 800)
-  pollTimer.unref()
+  let pollTimer: NodeJS.Timeout | null = null
+  if (!disableAutoPoll) {
+    activePollPromise = pollPlans().catch(() => {})
+    pollTimer = setInterval(() => {
+      if (!isClosed) {
+        activePollPromise = pollPlans().catch(() => {})
+      }
+    }, 800)
+    pollTimer.unref()
+  }
 
   const instance: UiServerInstance = {
     server,
@@ -1132,7 +1145,14 @@ export async function startUiServer(
     getPlans: () => [...memoryPlans],
     getActivePlan: () => activePlan,
     close: async () => {
-      clearInterval(pollTimer)
+      isClosed = true
+      if (pollTimer) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
+      if (activePollPromise) {
+        await activePollPromise.catch(() => {})
+      }
       for (const client of sseClients) {
         try {
           client.end()
