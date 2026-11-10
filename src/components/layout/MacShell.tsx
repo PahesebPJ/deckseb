@@ -71,18 +71,8 @@ export const MacShell: React.FC<MacShellProps> = ({
           )}
         </div>
 
-        {/* Right: Live Pulse, Plan Simulator & Theme Toggle */}
+        {/* Right: Plan Simulator & Theme Toggle */}
         <div className="mac-titlebar-right">
-          {/* Live Indicator */}
-          <div
-            className="host-status-chip"
-            title="Escuchando planes y diagramas generados en tiempo real"
-            style={{ cursor: 'default' }}
-          >
-            <span className="status-dot-pulse" />
-            <span style={{ color: 'var(--mac-text-secondary)', fontWeight: 500 }}>En vivo</span>
-          </div>
-
           {/* Quick Simulated Plan for Testing */}
           {onSimulatePlan && (
             <button

@@ -237,6 +237,51 @@ flowchart TD
       assert.equal(syncedArt?.syncedToMemoseb, true)
       assert.equal(syncedArt?.memosebCategory, 'architecture')
     })
+
+    it('orders artifacts descending by detectedAt and moves updated plan to the front', async () => {
+      const older = await deckClient.submitPlan({
+        title: 'Older Plan',
+        content: '# Older Plan\nCreated first.',
+        filePath: 'plans/older-plan.md',
+        projectSlug: 'order-test-project',
+      })
+      assert.ok(older)
+
+      await new Promise((r) => setTimeout(r, 15))
+
+      const newer = await deckClient.submitPlan({
+        title: 'Newer Plan',
+        content: '# Newer Plan\nCreated second.',
+        filePath: 'plans/newer-plan.md',
+        projectSlug: 'order-test-project',
+      })
+      assert.ok(newer)
+
+      const listAfterSecond = await deckClient.listArtifacts({ projectSlug: 'order-test-project' })
+      assert.equal(listAfterSecond[0]?.id, newer.id, 'Latest submitted plan should be first')
+      assert.equal(listAfterSecond[1]?.id, older.id)
+
+      await new Promise((r) => setTimeout(r, 15))
+
+      const updated = await deckClient.submitPlan({
+        title: 'Older Plan Updated to Latest',
+        content: '# Older Plan Updated\nUpdated content.',
+        filePath: 'plans/older-plan.md',
+        projectSlug: 'order-test-project',
+      })
+      assert.ok(updated)
+      assert.equal(updated.id, older.id, 'Should preserve the original artifact id')
+
+      const listAfterUpdate = await deckClient.listArtifacts({ projectSlug: 'order-test-project' })
+      assert.equal(listAfterUpdate[0]?.id, older.id, 'Updated plan should now be at the front')
+      assert.equal(listAfterUpdate[0]?.title, 'Older Plan Updated to Latest')
+      assert.equal(listAfterUpdate[1]?.id, newer.id)
+      assert.ok(
+        new Date(listAfterUpdate[0]!.detectedAt).getTime() >=
+          new Date(listAfterUpdate[1]!.detectedAt).getTime(),
+        'List must be strictly sorted by detectedAt descending'
+      )
+    })
   })
 
   describe('end-to-end reactive flow: PlanWatcher -> SegmentedVault -> UiServer -> SSE', () => {

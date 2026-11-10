@@ -86,6 +86,7 @@ export interface TauriDeckCommands {
   }
   'deck:plan_submit': {
     request: {
+      id?: string
       title?: string
       content: string
       filePath?: string

@@ -239,6 +239,9 @@ Hubseb actúa como el orquestador central del ecosistema *seb. Deckseb opera com
         if (req && req.projectSlug) {
           list = list.filter((a) => a.projectSlug === req.projectSlug)
         }
+        list.sort(
+          (a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
+        )
         return list as TauriDeckCommands[K]['response']
       }
 
@@ -249,21 +252,46 @@ Hubseb actúa como el orquestador central del ecosistema *seb. Deckseb opera com
         }
         const segment = classifySegment(req.filePath, req.content)
         const title = req.title || extractTitle(req.content, req.filePath)
-        const newArtifact: DetectedArtifact = {
-          id: `art-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          sessionId: 'session-default',
-          projectSlug: req.projectSlug || 'deckseb',
-          segment,
-          title,
-          filePath: req.filePath || `plans/plan-${Date.now()}.md`,
-          content: req.content,
-          mermaidBlocks: extractMermaidBlocks(req.content),
-          detectedAt: new Date().toISOString(),
-          syncedToMemoseb: false,
+        const now = new Date().toISOString()
+
+        const existingIdx = this.artifacts.findIndex(
+          (a) =>
+            Boolean(req.id && a.id === req.id) ||
+            Boolean(req.filePath && a.filePath === req.filePath)
+        )
+
+        let targetArtifact: DetectedArtifact
+
+        if (existingIdx >= 0) {
+          const existing = this.artifacts.splice(existingIdx, 1)[0]!
+          targetArtifact = {
+            ...existing,
+            title,
+            segment,
+            content: req.content,
+            mermaidBlocks: extractMermaidBlocks(req.content),
+            detectedAt: now,
+            projectSlug: req.projectSlug || existing.projectSlug || 'deckseb',
+            filePath: req.filePath || existing.filePath,
+          }
+        } else {
+          targetArtifact = {
+            id: req.id || `art-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            sessionId: 'session-default',
+            projectSlug: req.projectSlug || 'deckseb',
+            segment,
+            title,
+            filePath: req.filePath || `plans/plan-${Date.now()}.md`,
+            content: req.content,
+            mermaidBlocks: extractMermaidBlocks(req.content),
+            detectedAt: now,
+            syncedToMemoseb: false,
+          }
         }
-        this.artifacts.unshift(newArtifact)
-        this.emit('deck:artifact-detected', newArtifact)
-        return newArtifact as TauriDeckCommands[K]['response']
+
+        this.artifacts.unshift(targetArtifact)
+        this.emit('deck:artifact-detected', targetArtifact)
+        return targetArtifact as TauriDeckCommands[K]['response']
       }
 
       case 'deck:sync_artifact_memoseb': {
@@ -310,6 +338,7 @@ Hubseb actúa como el orquestador central del ecosistema *seb. Deckseb opera com
   }
 
   public async submitPlan(params: {
+    id?: string
     title?: string
     content: string
     filePath?: string
@@ -317,10 +346,13 @@ Hubseb actúa como el orquestador central del ecosistema *seb. Deckseb opera com
   }): Promise<DetectedArtifact | null> {
     const result = await this.invokeCommand('deck:plan_submit', params)
     if (result) {
-      const exists = this.artifacts.some((a) => a.id === result.id)
-      if (!exists) {
-        this.artifacts.unshift(result)
+      const existingIdx = this.artifacts.findIndex(
+        (a) => a.id === result.id || (Boolean(result.filePath) && a.filePath === result.filePath)
+      )
+      if (existingIdx >= 0) {
+        this.artifacts.splice(existingIdx, 1)
       }
+      this.artifacts.unshift(result)
       this.emit('deck:artifact-detected', result)
       return result
     }
