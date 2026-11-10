@@ -443,6 +443,28 @@ flowchart LR
           'Reactive Implementation Plan: Autonomous Bridge (V2)'
         )
         assert.match(sseUpdated.artifact.mermaidBlocks[0], /flowchart LR/)
+
+        // Verify activePlan and getPlans()[0] are updated to latest-first
+        assert.equal(
+          serverInstance.getActivePlan()?.title,
+          'Reactive Implementation Plan: Autonomous Bridge (V2)'
+        )
+        assert.equal(
+          serverInstance.getPlans()[0]?.title,
+          'Reactive Implementation Plan: Autonomous Bridge (V2)'
+        )
+
+        const updatedPlansRes = await fetch(`${baseUrl}/api/plans`)
+        assert.equal(updatedPlansRes.status, 200)
+        const updatedPlansData = await updatedPlansRes.json()
+        assert.equal(
+          updatedPlansData.activePlan?.title,
+          'Reactive Implementation Plan: Autonomous Bridge (V2)'
+        )
+        assert.equal(
+          updatedPlansData.plans[0]?.title,
+          'Reactive Implementation Plan: Autonomous Bridge (V2)'
+        )
       } finally {
         if (sseCollector) {
           await sseCollector.close()

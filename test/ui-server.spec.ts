@@ -62,6 +62,25 @@ describe('ui-server HTTP API & Minimalist Plan Viewer', () => {
     assert.match(html, /renderMermaidSvg/)
     assert.match(html, /gh-alert/)
     assert.match(html, /plan-table/)
+
+    // Confirm sidebar rendering, sorting, and search filtering logic exist in script
+    assert.match(html, /renderPlanSidebar/)
+    assert.match(html, /sortPlansLatestFirst/)
+    assert.match(html, /searchQuery/)
+  })
+
+  it('confirms #liveIndicator, #planSelector, and "En vivo" are eradicated from ui-server and MacShell', async () => {
+    const macShellPath = path.resolve(import.meta.dirname, '../src/components/layout/MacShell.tsx')
+    const macShellContent = await fs.readFile(macShellPath, 'utf8')
+    assert.doesNotMatch(macShellContent, /liveIndicator/)
+    assert.doesNotMatch(macShellContent, /planSelector/)
+    assert.doesNotMatch(macShellContent, /En vivo/)
+
+    const uiServerPath = path.resolve(import.meta.dirname, '../src/cli/ui-server.ts')
+    const uiServerContent = await fs.readFile(uiServerPath, 'utf8')
+    assert.doesNotMatch(uiServerContent, /id="liveIndicator"/)
+    assert.doesNotMatch(uiServerContent, /id="planSelector"/)
+    assert.doesNotMatch(uiServerContent, />En vivo</)
   })
 
   it('serves the macos.css stylesheet on GET /styles/macos.css', async () => {
