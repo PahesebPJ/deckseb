@@ -258,9 +258,9 @@ export function generateDeckUiHtml(): string {
         // Code: inline code
         out = out.replace(new RegExp('\\x60([^\\x60]+)\\x60', 'g'), '<code>$1</code>');
         // Bold: **text** or __text__
-        out = out.replace(/(\*\*|__)(.*?)\\1/g, '<strong>$2</strong>');
+        out = out.replace(/(\\*\\*|__)(.*?)\\1/g, '<strong>$2</strong>');
         // Italic: *text* or _text_
-        out = out.replace(/(\*|_)(.*?)\\1/g, '<em>$2</em>');
+        out = out.replace(/(\\*|_)(.*?)\\1/g, '<em>$2</em>');
         // Links: [text](url)
         out = out.replace(/\\[([^\\]]+)\\]\\(([^\\)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
         return out;
@@ -290,6 +290,7 @@ export function generateDeckUiHtml(): string {
           // Parse lines
           for (let i = (isFlow ? 1 : 0); i < lines.length; i++) {
             const line = lines[i];
+            if (/^(subgraph\\b|end\\b)/i.test(line)) continue;
             // Match edge patterns: A --> B, A -->|text| B, A -.-> B, A --- B, etc.
             const edgeMatch = line.match(/^([A-Za-z0-9_.-]+(?:\\[[^\\]]+\\]|\\([^\\)]+\\)|\\{\\{[^\\}]+\\}\\}|\\{[^\\}]+\\})?)\\s*(-->|-.->|---|==>)(?:\\|([^|]+)\\|)?\\s*([A-Za-z0-9_.-]+(?:\\[[^\\]]+\\]|\\([^\\)]+\\)|\\{\\{[^\\}]+\\}\\}|\\{[^\\}]+\\})?)/);
             if (edgeMatch) {
@@ -623,7 +624,7 @@ export function generateDeckUiHtml(): string {
             html += '<ul>';
             while (i < lines.length) {
               const liMatch = lines[i].match(/^\\s*[-*]\\s+(.+)$/);
-              if (!liMatch || /^\s*[-*]\s+\[[ xX]\]/.test(lines[i])) break;
+              if (!liMatch || /^\\s*[-*]\\s+\\[[ xX]\\]/.test(lines[i])) break;
               html += '<li>' + renderInline(liMatch[1]) + '</li>';
               i++;
             }
@@ -696,7 +697,7 @@ export function generateDeckUiHtml(): string {
 
       function shortFilePath(p) {
         if (!p) return '~';
-        const parts = p.replace(/\\/g, '/').split('/');
+        const parts = p.replace(/\\\\/g, '/').split('/');
         return parts.slice(-2).join('/');
       }
 

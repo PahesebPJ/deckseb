@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { after, before, describe, it } from 'node:test'
+import vm from 'node:vm'
 import { startUiServer, type UiServerInstance } from '../src/cli/ui-server.ts'
 
 describe('ui-server HTTP API & Minimalist Plan Viewer', () => {
@@ -67,6 +68,92 @@ describe('ui-server HTTP API & Minimalist Plan Viewer', () => {
     assert.match(html, /renderPlanSidebar/)
     assert.match(html, /sortPlansLatestFirst/)
     assert.match(html, /searchQuery/)
+
+    // Extract script content and verify it compiles without SyntaxError (e.g. unescaped regexes)
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/)
+    assert.ok(scriptMatch && scriptMatch[1], 'script tag should be present in served HTML')
+    const scriptContent = scriptMatch[1]
+
+    const script = new vm.Script(scriptContent)
+    assert.ok(script)
+
+    // Execute in a mock context to verify regular expressions and runtime evaluation
+    const fakeEl = {
+      getAttribute: () => 'dark',
+      setAttribute: () => {},
+      addEventListener: () => {},
+      style: {},
+      classList: { toggle: () => false },
+      querySelector: () => null,
+      appendChild: () => {},
+      innerHTML: '',
+      textContent: '',
+    }
+    const context = vm.createContext({
+      document: {
+        documentElement: fakeEl,
+        getElementById: () => fakeEl,
+        createElement: () => fakeEl,
+      },
+      window: {
+        matchMedia: () => ({ matches: false }),
+        addEventListener: () => {},
+      },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {},
+      },
+      fetch: () => Promise.resolve({ json: () => Promise.resolve({ plans: [] }) }),
+      EventSource: class {
+        onmessage: unknown = null
+      },
+      console,
+      setTimeout: () => {},
+    })
+
+    assert.doesNotThrow(() => {
+      script.runInContext(context)
+    })
+
+    // Evaluate core rendering functions in simulated context
+    const fnSnippet = scriptContent
+      .replace(/\(function\(\)\s*\{/, '')
+      .replace(/\}\)\(\);?\s*$/, '')
+    vm.runInContext(fnSnippet, context)
+
+    const anyCtx = context as unknown as {
+      renderInline: (text: string) => string
+      renderMarkdown: (md: string) => string
+      shortFilePath: (p: string) => string
+      renderMermaidSvg: (code: string) => string | null
+    }
+
+    // Verify renderInline parses bold, italic, code, link without SyntaxError
+    const inlineResult = anyCtx.renderInline('**bold** and *italic* and `code` and [title](https://example.com)')
+    assert.match(inlineResult, /<strong>bold<\/strong>/)
+    assert.match(inlineResult, /<em>italic<\/em>/)
+    assert.match(inlineResult, /<code>code<\/code>/)
+    assert.match(inlineResult, /<a href="https:\/\/example\.com"/)
+
+    // Verify renderMarkdown handles horizontal rule, checklists, subgraphs without SyntaxError
+    const mdResult = anyCtx.renderMarkdown(
+      '# Title\n\n---\n\n- [x] Done\n- Regular item\n\n```mermaid\nflowchart TD\n  subgraph Cluster\n    A --> B\n  end\n```'
+    )
+    assert.match(mdResult, /<h1>Title<\/h1>/)
+    assert.match(mdResult, /<hr>/)
+    assert.match(mdResult, /class="task-list"/)
+    assert.match(mdResult, /mermaid-card/)
+
+    // Verify shortFilePath handles Windows backslashes without regex parsing errors
+    const shortWin = anyCtx.shortFilePath('C:\\Users\\Alan\\project\\plan.md')
+    assert.equal(shortWin, 'project/plan.md')
+
+    const shortUnix = anyCtx.shortFilePath('/home/alan/project/plan.md')
+    assert.equal(shortUnix, 'project/plan.md')
+
+    // Verify renderMermaidSvg handles subgraph and end gracefully
+    const mermaidSvg = anyCtx.renderMermaidSvg('flowchart TD\n  subgraph Sub\n    A --> B\n  end')
+    assert.ok(mermaidSvg && mermaidSvg.includes('<svg'))
   })
 
   it('confirms #liveIndicator, #planSelector, and "En vivo" are eradicated from ui-server and MacShell', async () => {
