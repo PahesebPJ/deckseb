@@ -291,12 +291,16 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({ onActivePlanChange }) =>
   const [selectedCategory, setSelectedCategory] = useState<MemosebCategory>('architecture')
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [viewRawMermaid, setViewRawMermaid] = useState<boolean>(false)
+  const [searchQuery, setSearchQuery] = useState<string>('')
 
   const refreshArtifacts = () => {
     deckClient.listArtifacts().then((list) => {
-      setArtifacts(list)
-      if (list[0] && !selectedArtifactId) {
-        setSelectedArtifactId(list[0].id)
+      const sorted = [...list].sort(
+        (a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
+      )
+      setArtifacts(sorted)
+      if (sorted[0] && !selectedArtifactId) {
+        setSelectedArtifactId(sorted[0].id)
       }
     })
   }
@@ -306,7 +310,7 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({ onActivePlanChange }) =>
 
     // Listen for new detected artifacts
     const unsub = deckClient.on('deck:artifact-detected', (art) => {
-      setArtifacts((prev) => [art, ...prev.filter((a) => a.id !== art.id)])
+      setArtifacts((prev) => [art, ...prev.filter((a) => a.id !== art.id && a.filePath !== art.filePath)])
       setSelectedArtifactId(art.id)
       if (art.memosebCategory) {
         setSelectedCategory(art.memosebCategory)
@@ -317,9 +321,20 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({ onActivePlanChange }) =>
     return unsub
   }, [])
 
-  const filteredArtifacts = artifacts.filter(
-    (a) => selectedSegment === 'all' || a.segment === selectedSegment
-  )
+  const filteredArtifacts = artifacts.filter((a) => {
+    const matchesSegment = selectedSegment === 'all' || a.segment === selectedSegment
+    if (!matchesSegment) return false
+
+    if (!searchQuery.trim()) return true
+
+    const query = searchQuery.toLowerCase().trim()
+    const matchesTitle = a.title ? a.title.toLowerCase().includes(query) : false
+    const matchesPath = a.filePath ? a.filePath.toLowerCase().includes(query) : false
+    const matchesSegmentName = a.segment ? a.segment.toLowerCase().includes(query) : false
+    const matchesContent = a.content ? a.content.toLowerCase().includes(query) : false
+
+    return matchesTitle || matchesPath || matchesSegmentName || matchesContent
+  })
 
   const activeArtifact =
     artifacts.find((a) => a.id === selectedArtifactId) ||
@@ -404,6 +419,27 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({ onActivePlanChange }) =>
           </span>
         </div>
 
+        {/* Search Input macOS Sequoia Minimal */}
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--mac-border-subtle)' }}>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+            placeholder="Buscar planes por título, ruta o contenido…"
+            aria-label="Buscar planes"
+            style={{
+              width: '100%',
+              padding: '6px 10px',
+              fontSize: '12px',
+              borderRadius: '6px',
+              border: '1px solid var(--bento-border)',
+              background: 'var(--mac-bg-input)',
+              color: 'var(--mac-text-primary)',
+              outline: 'none',
+            }}
+          />
+        </div>
+
         {/* Segment Filter Tabs */}
         <div
           style={{
@@ -456,11 +492,14 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({ onActivePlanChange }) =>
                 fontSize: '12px',
               }}
             >
-              No hay planes en este segmento.
+              {searchQuery.trim()
+                ? 'No se encontraron planes con esa búsqueda.'
+                : 'No hay planes en este segmento.'}
             </div>
           ) : (
-            filteredArtifacts.map((art) => {
+            filteredArtifacts.map((art, index) => {
               const isSelected = activeArtifact?.id === art.id
+              const isLatest = index === 0
               return (
                 <div
                   key={art.id}
@@ -484,17 +523,35 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({ onActivePlanChange }) =>
                       marginBottom: '4px',
                     }}
                   >
-                    <span
-                      style={{
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        color: 'var(--mac-accent)',
-                        letterSpacing: '0.4px',
-                      }}
-                    >
-                      {art.segment}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span
+                        style={{
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          textTransform: 'uppercase',
+                          color: 'var(--mac-accent)',
+                          letterSpacing: '0.4px',
+                        }}
+                      >
+                        {art.segment}
+                      </span>
+                      {isLatest && (
+                        <span
+                          style={{
+                            fontSize: '9.5px',
+                            fontWeight: 700,
+                            padding: '1px 6px',
+                            borderRadius: '4px',
+                            background: 'var(--mac-accent-subtle)',
+                            color: 'var(--mac-accent)',
+                            letterSpacing: '0.3px',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          Último
+                        </span>
+                      )}
+                    </div>
                     {art.syncedToMemoseb && (
                       <span
                         style={{
