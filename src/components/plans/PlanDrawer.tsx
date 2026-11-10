@@ -497,9 +497,9 @@ export const PlanDrawer: React.FC<PlanDrawerProps> = ({ onActivePlanChange }) =>
                 : 'No hay planes en este segmento.'}
             </div>
           ) : (
-            filteredArtifacts.map((art, index) => {
+            filteredArtifacts.map((art) => {
               const isSelected = activeArtifact?.id === art.id
-              const isLatest = index === 0
+              const isLatest = artifacts[0]?.id === art.id
               return (
                 <div
                   key={art.id}
