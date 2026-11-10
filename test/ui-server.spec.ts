@@ -40,8 +40,15 @@ describe('ui-server HTTP API & Minimalist Plan Viewer', () => {
     assert.match(html, /deckseb — Visor Editorial de Planes/)
     assert.match(html, /class="plan-shell"/)
     assert.match(html, /class="traffic-lights"/)
-    assert.match(html, /id="liveIndicator"/)
-    assert.match(html, /id="planSelector"/)
+    assert.match(html, /class="plan-workspace"/)
+    assert.match(html, /id="planSidebar"/)
+    assert.match(html, /id="planSearchInput"/)
+    assert.match(html, /id="planList"/)
+    assert.match(html, /id="planCountBadge"/)
+    assert.doesNotMatch(html, /id="liveIndicator"/)
+    assert.doesNotMatch(html, /id="planSelector"/)
+    assert.doesNotMatch(html, /En vivo/)
+
     assert.match(html, /id="themeToggleBtn"/)
     assert.match(html, /id="emptyState"/)
     assert.match(html, /id="planView"/)
@@ -130,6 +137,7 @@ flowchart TD
     const listRes = await fetch(`${baseUrl}/api/plans`)
     const listData = await listRes.json()
     assert.ok(listData.plans.length >= 1)
+    assert.equal(listData.plans[0]?.title, 'Plan de Migración Arquitectónica')
     assert.equal(listData.activePlan?.title, 'Plan de Migración Arquitectónica')
   })
 
@@ -215,6 +223,7 @@ flowchart TD
       assert.ok(active)
       // The newest plan should be the active plan
       assert.equal(active?.title, 'Plan Más Reciente')
+      assert.equal(server3.getPlans()[0]?.title, 'Plan Más Reciente')
 
       // Test publishPlan with silent = true
       await server3.publishPlan(
@@ -234,6 +243,28 @@ flowchart TD
         true
       )
       assert.equal(server3.getActivePlan()?.title, 'Plan Manual Silencioso')
+      assert.equal(server3.getPlans()[0]?.title, 'Plan Manual Silencioso')
+
+      // Now update the older plan to verify it moves to index 0 and becomes activePlan
+      await server3.publishPlan(
+        {
+          id: 'manual-test-id-2',
+          sessionId: 'test-session',
+          projectSlug: 'test',
+          segment: 'plans',
+          title: 'Plan Anterior',
+          filePath: olderPlan,
+          content: '# Plan Anterior Actualizado',
+          mermaidBlocks: [],
+          detectedAt: new Date().toISOString(),
+          syncedToMemoseb: false,
+        },
+        'plan:updated',
+        false
+      )
+      assert.equal(server3.getActivePlan()?.title, 'Plan Anterior')
+      assert.equal(server3.getPlans()[0]?.title, 'Plan Anterior')
+      assert.equal(server3.getPlans()[0]?.content, '# Plan Anterior Actualizado')
     } finally {
       await server3.close()
     }

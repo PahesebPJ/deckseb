@@ -136,59 +136,69 @@ export function generateDeckUiHtml(): string {
           <span class="traffic-light maximize" title="Maximizar"></span>
         </div>
         <span class="brand-badge">deckseb</span>
-        <span id="liveIndicator" class="live-indicator">
-          <span id="liveDot" class="live-dot"></span>
-          <span id="liveText">En vivo</span>
-        </span>
       </div>
 
       <div class="topbar-right">
-        <div class="plan-select-wrapper">
-          <select id="planSelector" class="plan-select" aria-label="Seleccionar plan">
-            <option value="" disabled selected>Esperando planes…</option>
-          </select>
-          <span class="plan-select-caret">▼</span>
-        </div>
         <button id="themeToggleBtn" class="theme-toggle-btn" title="Alternar Modo Oscuro / Claro" aria-label="Alternar tema">
           <span id="themeIcon">☀️</span>
         </button>
       </div>
     </header>
 
-    <main class="plan-reader">
-      <div id="emptyState" class="plan-empty-state">
-        <div class="plan-empty-icon">🪐</div>
-        <h2 class="plan-empty-title">Esperando plan del modelo…</h2>
-        <p class="plan-empty-desc">En cuanto el agente cree un plan de implementación, aparecerá aquí automáticamente con diagramas interactivos y matriz de tareas.</p>
-      </div>
-
-      <article id="planView" class="plan-view" style="display: none;">
-        <header class="plan-header">
-          <div class="plan-badges-row">
-            <span id="planSegment" class="segment-badge">plans</span>
+    <div class="plan-workspace">
+      <aside id="planSidebar" class="plan-sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-title-row">
+            <h2 class="sidebar-title">Planes</h2>
+            <span id="planCountBadge" class="plan-count-badge">0</span>
           </div>
-          <h1 id="planTitle" class="plan-title">Título del Plan</h1>
-          <div class="plan-meta-row">
-            <span class="plan-meta-item" title="Ruta del archivo">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-              </svg>
-              <span id="planPath">~</span>
-            </span>
-            <span class="plan-meta-item" title="Hora de actualización">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="12 6 12 12 16 14"></polyline>
-              </svg>
-              <span id="planTimestamp">~</span>
-            </span>
-          </div>
-        </header>
+        </div>
 
-        <section id="planContent" class="plan-article"></section>
-      </article>
-    </main>
+        <div class="sidebar-search">
+          <div class="plan-search-wrapper">
+            <svg class="plan-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="search" id="planSearchInput" class="plan-search-input" placeholder="Buscar planes…" aria-label="Buscar planes" autocomplete="off">
+          </div>
+        </div>
+
+        <div id="planList" class="plan-list" role="listbox" aria-label="Lista de planes"></div>
+      </aside>
+
+      <main id="planReader" class="plan-reader">
+        <div id="emptyState" class="plan-empty-state">
+          <div class="plan-empty-icon">🪐</div>
+          <h2 class="plan-empty-title">Esperando plan del modelo…</h2>
+          <p class="plan-empty-desc">En cuanto el agente cree un plan de implementación, aparecerá aquí automáticamente con diagramas interactivos y matriz de tareas.</p>
+        </div>
+
+        <article id="planView" class="plan-view" style="display: none;">
+          <header class="plan-header">
+            <div class="plan-badges-row">
+              <span id="planSegment" class="segment-badge">plans</span>
+            </div>
+            <h1 id="planTitle" class="plan-title">Título del Plan</h1>
+            <div class="plan-meta-row">
+              <span class="plan-meta-item" title="Ruta del archivo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span id="planPath">~</span>
+              </span>
+              <span class="plan-meta-item" title="Hora de actualización">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+                <span id="planTimestamp">~</span>
+              </span>
+            </div>
+          </header>
+
+          <section id="planContent" class="plan-article"></section>
+        </article>
+      </main>
+    </div>
   </div>
 
   <script>
@@ -196,17 +206,18 @@ export function generateDeckUiHtml(): string {
       // --- State ---
       let currentPlans = [];
       let activePlanId = null;
+      let searchQuery = '';
 
       const emptyStateEl = document.getElementById('emptyState');
       const planViewEl = document.getElementById('planView');
-      const planSelector = document.getElementById('planSelector');
+      const planCountBadge = document.getElementById('planCountBadge');
+      const planSearchInput = document.getElementById('planSearchInput');
+      const planListEl = document.getElementById('planList');
       const planSegmentEl = document.getElementById('planSegment');
       const planTitleEl = document.getElementById('planTitle');
       const planPathEl = document.getElementById('planPath');
       const planTimestampEl = document.getElementById('planTimestamp');
       const planContentEl = document.getElementById('planContent');
-      const liveDot = document.getElementById('liveDot');
-      const liveText = document.getElementById('liveText');
       const themeToggleBtn = document.getElementById('themeToggleBtn');
       const themeIcon = document.getElementById('themeIcon');
 
@@ -668,6 +679,36 @@ export function generateDeckUiHtml(): string {
       };
 
       // --- Plan Display & Switcher ---
+      function slugify(s) {
+        return (s || '')
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+      }
+
+      function formatTime(isoStr) {
+        if (!isoStr) return '';
+        const dt = new Date(isoStr);
+        if (isNaN(dt.getTime())) return '';
+        return dt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) + ' · ' + dt.toLocaleDateString('es-ES');
+      }
+
+      function shortFilePath(p) {
+        if (!p) return '~';
+        const parts = p.replace(/\\/g, '/').split('/');
+        return parts.slice(-2).join('/');
+      }
+
+      function sortPlansLatestFirst(plans) {
+        if (!Array.isArray(plans)) return [];
+        return [...plans].sort((a, b) => {
+          const timeA = new Date(a.detectedAt || 0).getTime();
+          const timeB = new Date(b.detectedAt || 0).getTime();
+          return timeB - timeA;
+        });
+      }
+
       function displayPlan(plan) {
         if (!plan) {
           emptyStateEl.style.display = 'flex';
@@ -690,42 +731,86 @@ export function generateDeckUiHtml(): string {
         planContentEl.innerHTML = renderMarkdown(plan.content || '');
       }
 
-      function updatePlanSelector(plans, activeId) {
-        planSelector.innerHTML = '';
-        if (!plans || plans.length === 0) {
-          const opt = document.createElement('option');
-          opt.value = '';
-          opt.disabled = true;
-          opt.selected = true;
-          opt.textContent = 'Esperando planes…';
-          planSelector.appendChild(opt);
+      function renderPlanSidebar(plans, activeId) {
+        if (!planListEl) return;
+        planListEl.innerHTML = '';
+
+        const query = (searchQuery || '').trim().toLowerCase();
+        const filtered = plans.filter(p => {
+          if (!query) return true;
+          const inTitle = (p.title || '').toLowerCase().includes(query);
+          const inPath = (p.filePath || '').toLowerCase().includes(query);
+          const inSegment = (p.segment || '').toLowerCase().includes(query);
+          const inContent = (p.content || '').toLowerCase().includes(query);
+          return inTitle || inPath || inSegment || inContent;
+        });
+
+        if (planCountBadge) {
+          if (query) {
+            planCountBadge.textContent = filtered.length + '/' + plans.length;
+          } else {
+            planCountBadge.textContent = String(plans.length);
+          }
+        }
+
+        if (plans.length === 0) {
+          planListEl.innerHTML = '<div class="sidebar-empty">Esperando planes…</div>';
           return;
         }
 
-        plans.forEach((p, idx) => {
-          const opt = document.createElement('option');
-          opt.value = p.id;
-          opt.textContent = (idx === 0 ? '● ' : '') + (p.title || 'Plan sin título');
-          if (p.id === activeId) opt.selected = true;
-          planSelector.appendChild(opt);
+        if (filtered.length === 0) {
+          planListEl.innerHTML = '<div class="sidebar-empty">Sin resultados para la búsqueda</div>';
+          return;
+        }
+
+        const latestPlanId = plans.length > 0 ? plans[0].id : null;
+
+        filtered.forEach(p => {
+          const isLatest = p.id === latestPlanId;
+          const isActive = p.id === activeId;
+
+          const item = document.createElement('div');
+          item.className = 'plan-list-item' + (isActive ? ' active' : '');
+          item.setAttribute('role', 'option');
+          item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+
+          let cardHtml = '<div class="plan-item-header">';
+          cardHtml += '<span class="plan-item-segment">' + escapeHtml(p.segment || 'plans') + '</span>';
+          if (isLatest) {
+            cardHtml += '<span class="latest-badge">Reciente</span>';
+          }
+          cardHtml += '</div>';
+          cardHtml += '<div class="plan-item-title">' + escapeHtml(p.title || 'Plan sin título') + '</div>';
+          cardHtml += '<div class="plan-item-meta">';
+          cardHtml += '<span class="plan-item-file" title="' + escapeHtml(p.filePath || '') + '">' + escapeHtml(shortFilePath(p.filePath)) + '</span>';
+          cardHtml += '<span class="plan-item-time">' + escapeHtml(formatTime(p.detectedAt)) + '</span>';
+          cardHtml += '</div>';
+          item.innerHTML = cardHtml;
+          item.addEventListener('click', () => {
+            displayPlan(p);
+            renderPlanSidebar(currentPlans, p.id);
+          });
+          planListEl.appendChild(item);
         });
       }
 
-      planSelector.addEventListener('change', (e) => {
-        const id = e.target.value;
-        const target = currentPlans.find(p => p.id === id);
-        if (target) displayPlan(target);
-      });
+      if (planSearchInput) {
+        planSearchInput.addEventListener('input', (e) => {
+          searchQuery = e.target.value || '';
+          renderPlanSidebar(currentPlans, activePlanId);
+        });
+      }
 
       // --- Data Fetching & Server-Sent Events (SSE) ---
       function loadInitialPlans() {
         fetch('/api/plans')
           .then(res => res.json())
           .then(data => {
-            currentPlans = Array.isArray(data.plans) ? data.plans : [];
-            const active = data.activePlan || currentPlans[0] || null;
-            updatePlanSelector(currentPlans, active ? active.id : null);
+            const rawPlans = Array.isArray(data.plans) ? data.plans : [];
+            currentPlans = sortPlansLatestFirst(rawPlans);
+            const active = currentPlans[0] || data.activePlan || null;
             displayPlan(active);
+            renderPlanSidebar(currentPlans, active ? active.id : null);
           })
           .catch(() => {
             // Server might still be initializing
@@ -735,38 +820,32 @@ export function generateDeckUiHtml(): string {
       function connectEvents() {
         const es = new EventSource('/api/events');
 
-        es.onopen = () => {
-          liveDot.classList.remove('disconnected');
-          liveText.textContent = 'En vivo';
-        };
-
         es.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
             if (data.type === 'init') {
-              currentPlans = Array.isArray(data.plans) ? data.plans : [];
-              const active = data.activePlan || currentPlans[0] || null;
-              updatePlanSelector(currentPlans, active ? active.id : null);
+              const rawPlans = Array.isArray(data.plans) ? data.plans : [];
+              currentPlans = sortPlansLatestFirst(rawPlans);
+              const active = currentPlans[0] || data.activePlan || null;
               displayPlan(active);
+              renderPlanSidebar(currentPlans, active ? active.id : null);
             } else if (data.type === 'plan:created' || data.type === 'plan:updated') {
               const art = data.artifact;
-              const idx = currentPlans.findIndex(p => p.id === art.id || p.filePath === art.filePath);
+              const idx = currentPlans.findIndex(p =>
+                p.id === art.id ||
+                p.filePath === art.filePath ||
+                slugify(p.title) === slugify(art.title)
+              );
               if (idx >= 0) {
-                currentPlans[idx] = art;
-              } else {
-                currentPlans.unshift(art);
+                currentPlans.splice(idx, 1);
               }
-              updatePlanSelector(currentPlans, art.id);
+              currentPlans.unshift(art);
               displayPlan(art);
+              renderPlanSidebar(currentPlans, art.id);
             }
           } catch (e) {
             console.error('Error handling SSE event:', e);
           }
-        };
-
-        es.onerror = () => {
-          liveDot.classList.add('disconnected');
-          liveText.textContent = 'Reconectando…';
         };
       }
 
@@ -814,6 +893,8 @@ export async function startUiServer(
   const sseClients = new Set<http.ServerResponse>()
   let lastWindowOpenAt = 0
   let actualUrl = `http://${host}:${port}`
+  let isClosed = false
+  let isInitialScan = true
 
   // Function to broadcast and record plans
   const publishPlan = async (
@@ -822,22 +903,37 @@ export async function startUiServer(
     silent = false
   ): Promise<void> => {
     // 1. Save in vault
+    let savedArtifact: DetectedArtifact | null = null
     try {
-      await vault.saveArtifact(artifact)
+      savedArtifact = await vault.saveArtifact(artifact)
     } catch {
       // Continue even if vault filesystem write encounters an issue
     }
 
     // 2. Update memory state
+    const targetSlug = slugifyTitle(artifact.title)
     const existingIndex = memoryPlans.findIndex(
-      (p) => p.id === artifact.id || p.filePath === artifact.filePath
+      (p) =>
+        p.id === artifact.id ||
+        p.filePath === artifact.filePath ||
+        (savedArtifact && p.filePath === savedArtifact.filePath) ||
+        slugifyTitle(p.title) === targetSlug
     )
     if (existingIndex >= 0) {
-      memoryPlans[existingIndex] = artifact
+      memoryPlans.splice(existingIndex, 1)
+    }
+
+    if (isInitialScan) {
+      memoryPlans.push(artifact)
+      memoryPlans.sort(
+        (a, b) =>
+          new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
+      )
+      activePlan = memoryPlans[0] || null
     } else {
       memoryPlans.unshift(artifact)
+      activePlan = artifact
     }
-    activePlan = artifact
 
     // 3. Transmit via SSE to all active clients
     const payload = JSON.stringify({ type: eventType, artifact })
@@ -1026,10 +1122,28 @@ export async function startUiServer(
     typeof addr === 'object' && addr !== null ? addr.port : port
   actualUrl = `http://${host}:${actualPort}`
 
+  // --- Lightweight Plan Poller (600ms) ---
+  const fileCache = new Map<string, { mtime: number; size: number }>()
+  const candidateDirs = new Set<string>()
+  const homeDir = options?.homeDir ?? os.homedir()
+  const disableAutoPoll = options?.disableAutoPoll ?? false
+  let activePollPromise: Promise<void> | null = null
+
+  if (options?.watchDirs && Array.isArray(options.watchDirs)) {
+    for (const d of options.watchDirs) candidateDirs.add(path.resolve(d))
+  }
+  candidateDirs.add(path.resolve(process.cwd(), 'plans'))
+  candidateDirs.add(path.resolve(process.cwd(), 'docs', 'plans'))
+  const antigravityBrain = path.join(homeDir, '.gemini', 'antigravity-cli', 'brain')
+  if (existsSync(antigravityBrain)) {
+    candidateDirs.add(antigravityBrain)
+  }
+
   // Process initialPlanFile if provided
   if (options?.initialPlanFile && existsSync(options.initialPlanFile)) {
     try {
       const fullPath = path.resolve(options.initialPlanFile)
+      const st = statSync(fullPath)
       const raw = await readFile(fullPath, 'utf8')
       let initialArt = detectPlanInStream('cli-session', 'active-project', raw, fullPath)
       if (!initialArt) {
@@ -1043,11 +1157,15 @@ export async function startUiServer(
           filePath: fullPath,
           content: raw,
           mermaidBlocks: extractMermaidBlocks(raw),
-          detectedAt: new Date().toISOString(),
+          detectedAt: new Date(st.mtimeMs).toISOString(),
           syncedToMemoseb: false,
         }
+      } else {
+        initialArt.detectedAt = new Date(st.mtimeMs).toISOString()
       }
-      await publishPlan(initialArt, 'plan:created')
+      fileCache.set(fullPath, { mtime: st.mtimeMs, size: st.size })
+      await publishPlan(initialArt, 'plan:created', true)
+      activePlan = initialArt
     } catch {
       // Continue gracefully
     }
@@ -1057,25 +1175,6 @@ export async function startUiServer(
   if (openWindow && Date.now() - lastWindowOpenAt > 1500) {
     lastWindowOpenAt = Date.now()
     launchStandaloneDesktopWindow(actualUrl, openBrowser)
-  }
-
-  // --- Lightweight Plan Poller (600ms) ---
-  const fileCache = new Map<string, { mtime: number; size: number }>()
-  const candidateDirs = new Set<string>()
-  const homeDir = options?.homeDir ?? os.homedir()
-  const disableAutoPoll = options?.disableAutoPoll ?? false
-  let isClosed = false
-  let isInitialScan = true
-  let activePollPromise: Promise<void> | null = null
-
-  if (options?.watchDirs && Array.isArray(options.watchDirs)) {
-    for (const d of options.watchDirs) candidateDirs.add(path.resolve(d))
-  }
-  candidateDirs.add(path.resolve(process.cwd(), 'plans'))
-  candidateDirs.add(path.resolve(process.cwd(), 'docs', 'plans'))
-  const antigravityBrain = path.join(homeDir, '.gemini', 'antigravity-cli', 'brain')
-  if (existsSync(antigravityBrain)) {
-    candidateDirs.add(antigravityBrain)
   }
 
   interface CandidateFile {
@@ -1153,6 +1252,7 @@ export async function startUiServer(
           candidate.full
         )
         if (detected && !isClosed) {
+          detected.detectedAt = new Date(candidate.mtime).toISOString()
           if (isInitialScan) {
             await publishPlan(detected, 'plan:created', true)
           } else {
