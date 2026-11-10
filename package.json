@@ -1,6 +1,6 @@
 {
   "name": "deckseb",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Minimalist instant plan viewer with live Markdown GFM & Mermaid rendering for *seb ecosystem",
   "keywords": [
     "deckseb",
