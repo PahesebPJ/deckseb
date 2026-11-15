@@ -1,26 +1,32 @@
 {
-  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/schema.json",
+  "$schema": "https://schema.tauri.app/config/2",
   "productName": "deckseb",
-  "version": "0.2.2",
+  "version": "../package.json",
   "identifier": "com.paheseb.deckseb",
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "npm run build",
-    "devUrl": "http://localhost:5173",
-    "frontendDist": "../dist"
+    "beforeDevCommand": "npm run build:sidecar",
+    "beforeBuildCommand": "npm run build:sidecar",
+    "frontendDist": "loading"
   },
   "app": {
-    "windows": [
-      {
-        "title": "deckseb",
-        "width": 1280,
-        "height": 800,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ],
+    "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Visor editorial instantáneo de planes",
+    "longDescription": "Visor editorial de planes con Markdown GFM y Mermaid en vivo para el ecosistema *seb.",
+    "externalBin": ["binaries/deckseb-server"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }
