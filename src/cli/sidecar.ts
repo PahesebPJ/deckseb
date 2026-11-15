@@ -1,6 +1,8 @@
 import type { Readable, Writable } from 'node:stream'
 import { startUiServer, type UiServerInstance, type UiServerOptions } from './ui-server.ts'
 
+const SHUTDOWN_GRACE_MS = 2000
+
 export interface SidecarReadyEvent {
   event: 'ready'
   url: string
@@ -41,7 +43,13 @@ export async function runSidecar(options: SidecarOptions = {}): Promise<SidecarH
 
   let stopping: Promise<void> | null = null
   const shutdown = (): Promise<void> => {
-    stopping ??= instance.close().finally(() => options.onShutdown?.())
+    if (!stopping) {
+      // A half-open request would otherwise keep server.close() pending until requestTimeout.
+      instance.server.closeAllConnections()
+      const graceful = instance.close()
+      const deadline = new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS).unref())
+      stopping = Promise.race([graceful, deadline]).finally(() => options.onShutdown?.())
+    }
     return stopping
   }
 
