@@ -303,8 +303,10 @@ flowchart TD
       'utf8'
     )
 
-    // Wait slightly so mtimes differ
-    await new Promise((r) => setTimeout(r, 50))
+    // Pin mtimes explicitly instead of sleeping: a busy machine (parallel test files) must not
+    // be able to make both plans share a timestamp.
+    const past = new Date(Date.now() - 60_000)
+    await fs.utimes(olderPlan, past, past)
 
     // Create newer plan
     const newerPlan = path.join(watchDir, 'newer-plan.md')
@@ -323,8 +325,11 @@ flowchart TD
     })
 
     try {
-      // Allow initial scan to run
-      await new Promise((r) => setTimeout(r, 200))
+      // Poll for the initial scan instead of assuming it finishes within a fixed delay.
+      const deadline = Date.now() + 5000
+      while (server3.getActivePlan()?.title !== 'Plan Más Reciente' && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25))
+      }
       const active = server3.getActivePlan()
       assert.ok(active)
       // The newest plan should be the active plan

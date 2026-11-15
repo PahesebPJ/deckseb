@@ -11,6 +11,7 @@ import {
   startDecksebDaemon,
   stopDecksebDaemon,
   unregisterDecksebNode,
+  capabilitiesPacket,
 } from './setup.ts'
 import {
   launchStandaloneDesktopWindow,
@@ -213,6 +214,13 @@ async function main(): Promise<void> {
   const firstArg = args[0]
   const jsonMode = args.includes('--json')
   const port = extractPort(args, 4321)
+
+  if (firstArg === 'capabilities' || firstArg === 'ping') {
+    const packet = capabilitiesPacket(firstArg)
+    if (jsonMode) console.log(JSON.stringify(packet))
+    else console.log(`${BUNDLE_ID} v${VERSION} [provides: ${packet.payload.provides.join(', ')}]`)
+    return
+  }
 
   if (firstArg === '--help' || firstArg === '-h' || firstArg === 'help') {
     printHelp()
