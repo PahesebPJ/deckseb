@@ -20,6 +20,8 @@ export interface SidecarOptions {
   stdout?: Writable
   serverOptions?: UiServerOptions
   onShutdown?: () => void
+  /** Process signals that trigger a graceful shutdown; installed before the ready line. */
+  signals?: NodeJS.Signals[]
 }
 
 /**
@@ -32,6 +34,17 @@ export async function runSidecar(options: SidecarOptions = {}): Promise<SidecarH
   const stdin = options.stdin ?? process.stdin
   const stdout = options.stdout ?? process.stdout
 
+  // Handlers go in before anything else: a signal that lands between `ready` and a late
+  // registration would kill the process with the default action instead of a clean exit.
+  let shutdown: (() => Promise<void>) | null = null
+  let signalledEarly = false
+  for (const signal of options.signals ?? []) {
+    process.on(signal, () => {
+      if (shutdown) void shutdown()
+      else signalledEarly = true
+    })
+  }
+
   const instance = await startUiServer({
     ...options.serverOptions,
     port: 0,
@@ -42,7 +55,7 @@ export async function runSidecar(options: SidecarOptions = {}): Promise<SidecarH
   })
 
   let stopping: Promise<void> | null = null
-  const shutdown = (): Promise<void> => {
+  const stop = (): Promise<void> => {
     if (!stopping) {
       // A half-open request would otherwise keep server.close() pending until requestTimeout.
       instance.server.closeAllConnections()
@@ -52,10 +65,16 @@ export async function runSidecar(options: SidecarOptions = {}): Promise<SidecarH
     }
     return stopping
   }
+  shutdown = stop
 
-  stdin.on('end', () => void shutdown())
-  stdin.on('close', () => void shutdown())
-  stdin.on('error', () => void shutdown())
+  if (signalledEarly) {
+    await stop()
+    return { instance, shutdown: stop }
+  }
+
+  stdin.on('end', () => void stop())
+  stdin.on('close', () => void stop())
+  stdin.on('error', () => void stop())
   stdin.resume()
 
   const ready: SidecarReadyEvent = {
@@ -66,5 +85,5 @@ export async function runSidecar(options: SidecarOptions = {}): Promise<SidecarH
   }
   stdout.write(`${JSON.stringify(ready)}\n`)
 
-  return { instance, shutdown }
+  return { instance, shutdown: stop }
 }

@@ -251,10 +251,7 @@ async function main(): Promise<void> {
   }
 
   if (firstArg === 'sidecar') {
-    const handle = await runSidecar({ onShutdown: () => process.exit(0) })
-    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-      process.on(signal, () => void handle.shutdown())
-    }
+    await runSidecar({ onShutdown: () => process.exit(0), signals: ['SIGINT', 'SIGTERM'] })
     return
   }
 
