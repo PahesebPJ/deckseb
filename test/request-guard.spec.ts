@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import http from 'node:http'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import {
   MAX_BODY_BYTES,
+  isAllowedFetchSite,
   isAllowedHost,
   isAllowedOrigin,
   isJsonContentType,
-  resolvePlanFile,
+  readPlanFile,
 } from '../src/cli/request-guard.ts'
 import { startUiServer, type UiServerInstance } from '../src/cli/ui-server.ts'
 
@@ -39,6 +41,14 @@ describe('request-guard primitives', () => {
     assert.ok(!isAllowedHost('0.0.0.0:4321', 4321, '0.0.0.0'), 'wildcard binds add nothing')
   })
 
+  it('rejects cross-site fetch metadata but allows CLI, typed URLs and same-origin', () => {
+    assert.ok(isAllowedFetchSite(undefined), 'CLI and older browsers send no Sec-Fetch-Site')
+    assert.ok(isAllowedFetchSite('same-origin'))
+    assert.ok(isAllowedFetchSite('none'), 'URL typed in the address bar / --app window')
+    assert.ok(!isAllowedFetchSite('cross-site'), '<img>/<script> from another site')
+    assert.ok(!isAllowedFetchSite('same-site'), 'another port on the same host')
+  })
+
   it('requires an application/json media type', () => {
     assert.ok(isJsonContentType('application/json'))
     assert.ok(isJsonContentType('Application/JSON; charset=utf-8'))
@@ -47,7 +57,7 @@ describe('request-guard primitives', () => {
     assert.ok(!isJsonContentType(undefined))
   })
 
-  describe('resolvePlanFile', () => {
+  describe('readPlanFile', () => {
     let dir: string
     before(async () => {
       dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deckseb-guard-'))
@@ -61,23 +71,23 @@ describe('request-guard primitives', () => {
     })
 
     it('resolves regular Markdown files', async () => {
-      const res = await resolvePlanFile(path.join(dir, 'plan.md'))
-      assert.deepEqual(res, { ok: true, path: await fs.realpath(path.join(dir, 'plan.md')) })
+      const res = await readPlanFile(path.join(dir, 'plan.md'))
+      assert.deepEqual(res, { ok: true, path: await fs.realpath(path.join(dir, 'plan.md')), content: '# Plan\n' })
     })
 
     it('refuses non-Markdown, directories, missing and oversized files', async () => {
-      assert.equal((await resolvePlanFile(path.join(dir, 'id_rsa'))).ok, false)
-      assert.equal((await resolvePlanFile(path.join(dir, 'folder.md'))).ok, false)
-      assert.equal((await resolvePlanFile(path.join(dir, 'nope.md'))).ok, false)
-      assert.equal((await resolvePlanFile(path.join(dir, 'huge.md'))).ok, false)
-      assert.equal((await resolvePlanFile(42)).ok, false)
-      assert.equal((await resolvePlanFile('')).ok, false)
+      assert.equal((await readPlanFile(path.join(dir, 'id_rsa'))).ok, false)
+      assert.equal((await readPlanFile(path.join(dir, 'folder.md'))).ok, false)
+      assert.equal((await readPlanFile(path.join(dir, 'nope.md'))).ok, false)
+      assert.equal((await readPlanFile(path.join(dir, 'huge.md'))).ok, false)
+      assert.equal((await readPlanFile(42)).ok, false)
+      assert.equal((await readPlanFile('')).ok, false)
     })
 
     it('refuses a .md symlink that points at a secret', { skip: process.platform === 'win32' }, async () => {
       const link = path.join(dir, 'innocent.md')
       await fs.symlink(path.join(dir, 'id_rsa'), link)
-      const res = await resolvePlanFile(link)
+      const res = await readPlanFile(link)
       assert.equal(res.ok, false)
       assert.equal(res.ok === false && res.status, 403)
     })
@@ -140,6 +150,30 @@ describe('ui-server hardening against cross-origin abuse', () => {
     assert.equal(res.headers['access-control-allow-origin'], undefined)
     assert.equal(res.headers['x-content-type-options'], 'nosniff')
     assert.equal(res.headers['x-frame-options'], 'DENY')
+    assert.equal(res.headers['content-security-policy'], "frame-ancestors 'none'")
+  })
+
+  it('survives malformed request targets instead of crashing the daemon', async () => {
+    const reply = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect(server.port, '127.0.0.1', () =>
+        socket.write(`GET // HTTP/1.1\r\nHost: ${host()}\r\nConnection: close\r\n\r\n`)
+      )
+      let buf = ''
+      socket.on('data', (chunk) => (buf += chunk))
+      socket.on('close', () => resolve(buf.split('\r\n')[0] ?? ''))
+      socket.on('error', reject)
+    })
+    assert.match(reply, /^HTTP\/1\.1 400/)
+    const followUp = await rawRequest(server.port, { path: '/api/plans', headers: { Host: host() } })
+    assert.equal(followUp.status, 200, 'server keeps serving other clients')
+  })
+
+  it('rejects cross-site subresource GETs that carry no Origin', async () => {
+    const res = await rawRequest(server.port, {
+      path: '/api/artifacts',
+      headers: { Host: host(), 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Dest': 'script' },
+    })
+    assert.equal(res.status, 403)
   })
 
   it('rejects a cross-origin simple POST that tries to read a local file', async () => {
