@@ -52,9 +52,9 @@ npm run build
 npm test
 ```
 
-### 3. Verificar la suite de pruebas del backend nativo (Rust)
+### 3. Verificar el envoltorio de escritorio (Rust, opcional)
 ```sh
-(cd src-tauri && cargo test)
+npm run build:sidecar && (cd src-tauri && cargo test)
 ```
 
 ### 4. Enlazar el binario CLI y registrar en la topología de `hubseb`
@@ -94,13 +94,13 @@ Para garantizar que el código compila limpiamente y todas las pruebas pasan sin
 npm run typecheck
 npm test
 npm run build
-(cd src-tauri && cargo test)
+npm run build:sidecar && (cd src-tauri && cargo test)
 ```
 
 O en una sola orden encadenada:
 
 ```sh
-npm run typecheck && npm test && npm run build && (cd src-tauri && cargo test)
+npm run typecheck && npm test && npm run build && npm run build:sidecar && (cd src-tauri && cargo test)
 ```
 
 ---
