@@ -32,7 +32,7 @@ describe('deckseb sidecar mode', () => {
 
     const lines = output.trim().split('\n')
     assert.equal(lines.length, 1, 'exactly one stdout line before any request')
-    const ready = JSON.parse(lines[0]) as SidecarReadyEvent
+    const ready = JSON.parse(lines[0] ?? '') as SidecarReadyEvent
     assert.equal(ready.event, 'ready')
     assert.notEqual(ready.port, 4321, 'must not reuse the daemon default port')
     assert.ok(ready.port > 0)
