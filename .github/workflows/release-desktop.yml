@@ -2,12 +2,14 @@ name: release-desktop
 
 # Builds the Tauri shell + Node SEA sidecar installers on every platform.
 # Manual runs upload the installers as workflow artifacts; once a manual run is green on all
-# targets, add `release: { types: [published] }` below to attach them to each GitHub Release.
+# targets, add `release: { types: [published] }` below AND raise `contents` to `write` so
+# tauri-action can attach the installers to each GitHub Release.
 on:
   workflow_dispatch:
 
+# Read-only until the release trigger exists: npm/cargo build scripts run with this token in reach.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-tauri:
@@ -30,6 +32,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -88,8 +92,9 @@ jobs:
         shell: bash
         run: |
           bin="src-tauri/binaries/deckseb-server-${{ matrix.target }}"
-          [ "$RUNNER_OS" = "Windows" ] && bin="$bin.exe"
+          if [ "$RUNNER_OS" = "Windows" ]; then bin="$bin.exe"; fi
           "$bin" --version
+          node scripts/smoke-sidecar.mjs "$bin"
 
       - name: Upload installers
         if: github.event_name != 'release'
