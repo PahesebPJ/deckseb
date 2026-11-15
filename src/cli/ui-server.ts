@@ -12,6 +12,14 @@ import {
   slugifyTitle,
 } from '../core/plan-detector.ts'
 import { SegmentedArtifactVault } from '../core/segmented-vault.ts'
+import {
+  MAX_BODY_BYTES,
+  SECURITY_HEADERS,
+  isAllowedHost,
+  isAllowedOrigin,
+  isJsonContentType,
+  resolvePlanFile,
+} from './request-guard.ts'
 import type { DetectedArtifact } from '../types/deck.ts'
 import { BUNDLE_ID, PACKAGE_ROOT, VERSION } from '../version.ts'
 
@@ -956,16 +964,25 @@ export async function startUiServer(
 
   // HTTP Request Handler
   const server = http.createServer(async (req, res) => {
-    const parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host || host}`)
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value)
+
+    const boundAddress = server.address()
+    const boundPort = typeof boundAddress === 'object' && boundAddress !== null ? boundAddress.port : port
+    // No CORS headers on purpose: the viewer is same-origin and the CLI is not a browser.
+    if (
+      !isAllowedHost(req.headers.host, boundPort, host) ||
+      !isAllowedOrigin(req.headers.origin, boundPort, host)
+    ) {
+      res.writeHead(403, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Forbidden: cross-origin or foreign Host request' }))
+      return
+    }
+
+    const parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host}`)
     const pathname = parsedUrl.pathname
 
-    // CORS Headers
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-
     if (req.method === 'OPTIONS') {
-      res.writeHead(204)
+      res.writeHead(405, { Allow: 'GET, POST' })
       res.end()
       return
     }
@@ -1023,18 +1040,46 @@ export async function startUiServer(
       req.method === 'POST' &&
       (pathname === '/api/plans' || pathname === '/api/detect')
     ) {
+      if (!isJsonContentType(req.headers['content-type'])) {
+        res.writeHead(415, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Content-Type must be application/json' }))
+        return
+      }
+
       let body = ''
-      req.on('data', (chunk) => {
+      let bodyBytes = 0
+      let tooLarge = false
+      req.on('data', (chunk: Buffer) => {
+        if (tooLarge) return
+        bodyBytes += chunk.length
+        if (bodyBytes > MAX_BODY_BYTES) {
+          tooLarge = true
+          res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' })
+          res.end(JSON.stringify({ error: 'Request body too large' }))
+          res.on('finish', () => req.destroy())
+          return
+        }
         body += chunk
       })
       req.on('end', async () => {
+        if (tooLarge) return
         try {
           const json = body ? JSON.parse(body) : {}
           let content = json.content || json.text || ''
-          const targetPath = json.filePath ? path.resolve(json.filePath) : ''
+          let targetPath = ''
 
-          if (!content && targetPath && existsSync(targetPath)) {
+          if (!content && json.filePath !== undefined) {
+            const resolved = await resolvePlanFile(json.filePath)
+            if (!resolved.ok) {
+              res.writeHead(resolved.status, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: resolved.error }))
+              return
+            }
+            targetPath = resolved.path
             content = await readFile(targetPath, 'utf8')
+          } else if (typeof json.filePath === 'string' && json.filePath) {
+            // Inline content with a filePath label: keep it as metadata, never read it.
+            targetPath = path.resolve(json.filePath)
           }
 
           if (!content) {
