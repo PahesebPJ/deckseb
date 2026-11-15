@@ -46,7 +46,8 @@ flowchart LR
 
    > [!IMPORTANT]
    > La API solo atiende a la propia página del visor (mismo origen) y al CLI local (`src/cli/request-guard.ts`):
-   > - No envía cabeceras CORS. Rechaza con `403` las peticiones con un `Origin` ajeno o con un `Host` que no sea `127.0.0.1`, `localhost` o `[::1]` en su puerto (protección frente a DNS rebinding).
+   > - No envía cabeceras CORS. Rechaza con `403` las peticiones con un `Origin` ajeno, con `Sec-Fetch-Site: cross-site` o `same-site`, o con un `Host` que no sea `127.0.0.1`, `localhost` o `[::1]` en su puerto (protección frente a DNS rebinding).
+   > - Responde `400` a las rutas malformadas (por ejemplo `GET //`) sin afectar a los demás clientes.
    > - Los `POST` exigen `Content-Type: application/json` y un cuerpo de 5 MB como máximo.
    > - Un `filePath` solo puede apuntar a un archivo Markdown regular (`.md`, `.markdown`, `.mdx`) de 5 MB como máximo. Se comprueba tras resolver los enlaces simbólicos.
 5. **`Editorial Plan Viewer` (`src/cli/ui-server.ts`):**
