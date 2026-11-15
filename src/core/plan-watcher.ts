@@ -19,9 +19,25 @@ import {
 
 interface TrackedFile {
   mtimeMs: number
+  size: number
   hash: string
   artifact: DetectedArtifact
   isExplicit: boolean
+}
+
+/**
+ * mtime alone cannot prove a file is unchanged: two writes inside the filesystem's timestamp
+ * granularity (FAT: 2 s, NTFS metadata caching on Windows) report the same mtime. Like git's
+ * "racily clean" check, a matching mtime is only trusted once it is older than this window.
+ */
+const RACY_WINDOW_MS = 2000
+
+function isUnchanged(known: TrackedFile, stat: fsSync.Stats, now = Date.now()): boolean {
+  return (
+    known.mtimeMs === stat.mtimeMs &&
+    known.size === stat.size &&
+    now - stat.mtimeMs >= RACY_WINDOW_MS
+  )
 }
 
 /**
@@ -197,6 +213,7 @@ export class PlanWatcher {
 
       this.knownFiles.set(absPath, {
         mtimeMs: stat.mtimeMs,
+        size: stat.size,
         hash,
         artifact,
         isExplicit: true,
@@ -335,7 +352,7 @@ export class PlanWatcher {
         const known = this.knownFiles.get(filePath)
         const isExplicit = this.explicitWatchedFiles.has(filePath)
 
-        if (known && known.mtimeMs === stat.mtimeMs) {
+        if (known && isUnchanged(known, stat)) {
           continue
         }
 
@@ -344,6 +361,7 @@ export class PlanWatcher {
 
         if (known && known.hash === hash) {
           known.mtimeMs = stat.mtimeMs
+          known.size = stat.size
           continue
         }
 
@@ -371,6 +389,7 @@ export class PlanWatcher {
         const eventType: PlanWatcherEventType = known ? 'plan:updated' : 'plan:created'
         this.knownFiles.set(filePath, {
           mtimeMs: stat.mtimeMs,
+          size: stat.size,
           hash,
           artifact,
           isExplicit,
