@@ -122,6 +122,20 @@ ln -sf "$(pwd)/dist/cli/deckseb.js" ~/.local/bin/deckseb
 deckseb setup
 ```
 
+### Opción 4: App de Escritorio Nativa (Tauri)
+
+Instalables para Linux (`.deb`, `.rpm`, `.AppImage`), macOS (`.dmg`) y Windows (`.msi`, `-setup.exe`) que **no necesitan Node instalado**. La app es un envoltorio Tauri 2 que lanza el propio CLI, empaquetado como ejecutable Node SEA, en modo `deckseb sidecar` (puerto efímero en `127.0.0.1`) y muestra el mismo visor en una ventana nativa. Al cerrar la ventana el servidor se detiene.
+
+> [!WARNING]
+> Los binarios aún no están firmados: macOS (Gatekeeper) y Windows (SmartScreen) mostrarán un aviso de app no verificada la primera vez.
+
+Compilación local (requiere Rust stable y, en Linux, `webkit2gtk-4.1` y `libayatana-appindicator`):
+
+```sh
+npm install
+npm run tauri build   # ejecuta npm run build:sidecar y genera los instalables en src-tauri/target/release/bundle/
+```
+
 ---
 
 ## ⌨️ Referencia de Comandos CLI
@@ -184,11 +198,11 @@ npm test
 # 3. Compilación limpia del CLI y distribución
 npm run build
 
-# 4. Pruebas del backend nativo Tauri en Rust (si se compila el ejecutable nativo)
-(cd src-tauri && cargo test)
+# 4. Pruebas del envoltorio de escritorio Tauri (requiere el sidecar compilado)
+npm run build:sidecar && (cd src-tauri && cargo test)
 
 # 5. Verificación integrada en una sola línea
-npm run typecheck && npm test && npm run build && (cd src-tauri && cargo test)
+npm run typecheck && npm test && npm run build && npm run build:sidecar && (cd src-tauri && cargo test)
 ```
 
 ---

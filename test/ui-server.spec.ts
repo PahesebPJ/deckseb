@@ -156,13 +156,7 @@ describe('ui-server HTTP API & Minimalist Plan Viewer', () => {
     assert.ok(mermaidSvg && mermaidSvg.includes('<svg'))
   })
 
-  it('confirms #liveIndicator, #planSelector, and "En vivo" are eradicated from ui-server and MacShell', async () => {
-    const macShellPath = path.resolve(import.meta.dirname, '../src/components/layout/MacShell.tsx')
-    const macShellContent = await fs.readFile(macShellPath, 'utf8')
-    assert.doesNotMatch(macShellContent, /liveIndicator/)
-    assert.doesNotMatch(macShellContent, /planSelector/)
-    assert.doesNotMatch(macShellContent, /En vivo/)
-
+  it('confirms #liveIndicator, #planSelector, and "En vivo" are eradicated from ui-server', async () => {
     const uiServerPath = path.resolve(import.meta.dirname, '../src/cli/ui-server.ts')
     const uiServerContent = await fs.readFile(uiServerPath, 'utf8')
     assert.doesNotMatch(uiServerContent, /id="liveIndicator"/)

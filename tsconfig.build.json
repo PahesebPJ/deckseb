@@ -18,5 +18,5 @@
     "src/version.ts",
     "src/index.ts"
   ],
-  "exclude": ["test/**/*.ts", "src/components/**/*.tsx", "src/App.tsx", "src/main.tsx"]
+  "exclude": ["test/**/*.ts"]
 }

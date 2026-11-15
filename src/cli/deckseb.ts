@@ -17,6 +17,7 @@ import {
   launchStandaloneDesktopWindow,
   startUiServer,
 } from './ui-server.ts'
+import { runSidecar } from './sidecar.ts'
 
 function printHelp(): void {
   console.log(`
@@ -48,6 +49,10 @@ Uso:
 
   deckseb purge
       Detiene el daemon de deckseb y lo elimina de la topología de hubseb.
+
+  deckseb sidecar
+      Modo interno de la app de escritorio: sirve el visor en un puerto efímero,
+      anuncia {"event":"ready","url":...} por stdout y termina al cerrarse stdin.
 
   deckseb --version, -v
       Muestra la versión de deckseb.
@@ -242,6 +247,11 @@ async function main(): Promise<void> {
     } else {
       console.log(`🪐 Daemon de deckseb ya está activo en ${result.url}`)
     }
+    return
+  }
+
+  if (firstArg === 'sidecar') {
+    await runSidecar({ onShutdown: () => process.exit(0), signals: ['SIGINT', 'SIGTERM'] })
     return
   }
 

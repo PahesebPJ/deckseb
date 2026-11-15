@@ -49,10 +49,15 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.spec.ts\"",
     "deckseb": "node src/cli/deckseb.ts",
-    "ui": "node src/cli/deckseb.ts ui"
+    "ui": "node src/cli/deckseb.ts ui",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "tauri": "tauri"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^24.0.0",
+    "esbuild": "^0.25.12",
+    "postject": "^1.0.0-alpha.6",
     "typescript": "^5.8.2"
   }
 }
