@@ -13,6 +13,16 @@ import {
   slugifyTitle,
 } from '../core/plan-detector.ts'
 import { SegmentedArtifactVault } from '../core/segmented-vault.ts'
+import {
+  MAX_BODY_BYTES,
+  SECURITY_HEADERS,
+  firstHeader,
+  isAllowedFetchSite,
+  isAllowedHost,
+  isAllowedOrigin,
+  isJsonContentType,
+  readPlanFile,
+} from './request-guard.ts'
 import type { DetectedArtifact } from '../types/deck.ts'
 import { BUNDLE_ID, PACKAGE_ROOT, VERSION } from '../version.ts'
 
@@ -967,17 +977,35 @@ export async function startUiServer(
   }
 
   // HTTP Request Handler
-  const server = http.createServer(async (req, res) => {
-    const parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host || host}`)
-    const pathname = parsedUrl.pathname
+  const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value)
 
-    // CORS Headers
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    const boundAddress = server.address()
+    const boundPort = typeof boundAddress === 'object' && boundAddress !== null ? boundAddress.port : port
+    // No CORS headers on purpose: the viewer is same-origin and the CLI is not a browser.
+    if (
+      !isAllowedHost(req.headers.host, boundPort, host) ||
+      !isAllowedOrigin(req.headers.origin, boundPort, host) ||
+      !isAllowedFetchSite(firstHeader(req.headers['sec-fetch-site']))
+    ) {
+      res.writeHead(403, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Forbidden: cross-origin or foreign Host request' }))
+      return
+    }
+
+    // Fixed base: request targets like `//` or `//evil` are otherwise parsed as authority-relative
+    // and make `new URL` throw, which used to crash the whole daemon.
+    let pathname: string
+    try {
+      pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/plain' })
+      res.end('Bad Request')
+      return
+    }
 
     if (req.method === 'OPTIONS') {
-      res.writeHead(204)
+      res.writeHead(405, { Allow: 'GET, POST' })
       res.end()
       return
     }
@@ -1034,18 +1062,46 @@ export async function startUiServer(
       req.method === 'POST' &&
       (pathname === '/api/plans' || pathname === '/api/detect')
     ) {
+      if (!isJsonContentType(req.headers['content-type'])) {
+        res.writeHead(415, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Content-Type must be application/json' }))
+        return
+      }
+
       let body = ''
-      req.on('data', (chunk) => {
+      let bodyBytes = 0
+      let tooLarge = false
+      req.on('data', (chunk: Buffer) => {
+        if (tooLarge) return
+        bodyBytes += chunk.length
+        if (bodyBytes > MAX_BODY_BYTES) {
+          tooLarge = true
+          res.writeHead(413, { 'Content-Type': 'application/json', Connection: 'close' })
+          res.end(JSON.stringify({ error: 'Request body too large' }))
+          res.on('finish', () => req.destroy())
+          return
+        }
         body += chunk
       })
       req.on('end', async () => {
+        if (tooLarge) return
         try {
           const json = body ? JSON.parse(body) : {}
           let content = json.content || json.text || ''
-          const targetPath = json.filePath ? path.resolve(json.filePath) : ''
+          let targetPath = ''
 
-          if (!content && targetPath && existsSync(targetPath)) {
-            content = await readFile(targetPath, 'utf8')
+          if (!content && json.filePath !== undefined) {
+            const planFile = await readPlanFile(json.filePath)
+            if (!planFile.ok) {
+              res.writeHead(planFile.status, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: planFile.error }))
+              return
+            }
+            targetPath = planFile.path
+            content = planFile.content
+          } else if (typeof json.filePath === 'string' && json.filePath) {
+            // Inline content with a filePath label: keep it as metadata, never read it.
+            targetPath = path.resolve(json.filePath)
           }
 
           if (!content) {
@@ -1119,6 +1175,15 @@ export async function startUiServer(
     // Fallback 404
     res.writeHead(404, { 'Content-Type': 'text/plain' })
     res.end('Not Found')
+  }
+
+  // Any unexpected throw becomes a 500 for that request instead of an unhandled rejection that
+  // would take down the daemon for every other client.
+  const server = http.createServer((req, res) => {
+    handleRequest(req, res).catch(() => {
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' })
+      res.end()
+    })
   })
 
   // Start HTTP Server
