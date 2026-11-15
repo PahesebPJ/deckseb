@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import sea from 'node:sea'
 import {
   classifyArtifactSegment,
   detectPlanInStream,
@@ -860,6 +861,17 @@ export function generateDeckUiHtml(): string {
 </html>`
 }
 
+export const SEA_STYLESHEET_ASSET = 'macos.css'
+
+// Inside a Node SEA binary there is no package directory on disk, so the stylesheet ships as an
+// embedded asset (see scripts/build-sidecar.mjs).
+async function loadMacosStylesheet(): Promise<string> {
+  if (sea.isSea()) {
+    return sea.getAsset(SEA_STYLESHEET_ASSET, 'utf8')
+  }
+  return readFile(path.join(PACKAGE_ROOT, 'src', 'styles', 'macos.css'), 'utf8')
+}
+
 export async function startUiServer(
   options?: UiServerOptions
 ): Promise<UiServerInstance> {
@@ -983,9 +995,8 @@ export async function startUiServer(
 
     // 2. GET /styles/macos.css -> CSS Stylesheet
     if (req.method === 'GET' && pathname === '/styles/macos.css') {
-      const cssPath = path.join(PACKAGE_ROOT, 'src', 'styles', 'macos.css')
       try {
-        const css = await readFile(cssPath, 'utf8')
+        const css = await loadMacosStylesheet()
         res.writeHead(200, {
           'Content-Type': 'text/css; charset=utf-8',
           'Cache-Control': 'no-cache',
