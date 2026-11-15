@@ -43,6 +43,12 @@ flowchart LR
    Almacén estructurado local que cataloga y archiva versiones de planes en `.seb-vault/<proyecto>/`, exportando diagramas individuales a archivos `.mmd` y manteniendo un manifiesto sincronizable con la bóveda de memoria de `memoseb`.
 4. **`Minimal HTTP + SSE Server` (`src/cli/ui-server.ts`):**
    Servidor HTTP ligero basado exclusivamente en la biblioteca estándar de Node.js (`node:http`), sin dependencias infladas. Expone la API REST (`/api/plans`), sirve los activos editoriales y mantiene un canal persistente de **Server-Sent Events** (`/api/events`) para propagar cambios en tiempo real sin recargar la página.
+
+   > [!IMPORTANT]
+   > La API solo atiende a la propia página del visor (mismo origen) y al CLI local (`src/cli/request-guard.ts`):
+   > - No envía cabeceras CORS. Rechaza con `403` las peticiones con un `Origin` ajeno o con un `Host` que no sea `127.0.0.1`, `localhost` o `[::1]` en su puerto (protección frente a DNS rebinding).
+   > - Los `POST` exigen `Content-Type: application/json` y un cuerpo de 5 MB como máximo.
+   > - Un `filePath` solo puede apuntar a un archivo Markdown regular (`.md`, `.markdown`, `.mdx`) de 5 MB como máximo. Se comprueba tras resolver los enlaces simbólicos.
 5. **`Editorial Plan Viewer` (`src/cli/ui-server.ts`):**
    Interfaz editorial con tipografía de alta jerarquía y botones de control macOS Sequoia, capaz de lanzarse en modo aplicación de ventana flotante dedicada (`--app=http://127.0.0.1:4321` con Chromium, Google Chrome, Brave o Edge) o en el navegador predeterminado del sistema.
 
