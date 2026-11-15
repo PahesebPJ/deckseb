@@ -14,7 +14,9 @@ const isWindows = process.platform === 'win32'
 const isMac = process.platform === 'darwin'
 
 function hostTargetTriple() {
-  if (process.env.TAURI_TARGET_TRIPLE) return process.env.TAURI_TARGET_TRIPLE
+  // TAURI_ENV_TARGET_TRIPLE is exported by `tauri build/dev` to beforeBuildCommand (honours --target).
+  const fromEnv = process.env.TAURI_ENV_TARGET_TRIPLE ?? process.env.TAURI_TARGET_TRIPLE
+  if (fromEnv) return fromEnv
   const info = execFileSync('rustc', ['-vV'], { encoding: 'utf8' })
   const host = info.match(/^host: (\S+)$/m)?.[1]
   if (!host) throw new Error('Could not read the host target triple from `rustc -vV`')
@@ -52,6 +54,7 @@ writeFileSync(bundlePath, bundled)
 const blobPath = path.join(workDir, 'sea-prep.blob')
 const triple = hostTargetTriple()
 const outBinary = path.join(binDir, `deckseb-server-${triple}${isWindows ? '.exe' : ''}`)
+// Must match SEA_STYLESHEET_ASSET in src/cli/ui-server.ts.
 const seaConfig = {
   main: bundlePath,
   output: blobPath,
@@ -78,6 +81,7 @@ if (hasBuildSea) {
   chmodSync(outBinary, 0o755)
   if (isMac) run('codesign', ['--remove-signature', outBinary])
   const postjectArgs = [
+    '--no-install',
     'postject',
     outBinary,
     'NODE_SEA_BLOB',
