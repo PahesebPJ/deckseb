@@ -174,6 +174,65 @@ Ensure 100% test coverage.
     }
   })
 
+  describe('change detection when mtime does not move', () => {
+    const OLD_MTIME = new Date('2020-01-01T00:00:00Z')
+
+    async function trackWithPinnedMtime(content: string, mtime: Date) {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'deckseb-racy-test-'))
+      const filePath = path.join(tmpDir, 'racy-plan.md')
+      const watcher = new PlanWatcher({ includeAntigravityBrain: false, pollIntervalMs: 0 })
+      const events: PlanWatcherEvent[] = []
+      watcher.onPlan((ev) => events.push(ev))
+      await fs.writeFile(filePath, content, 'utf8')
+      await fs.utimes(filePath, mtime, mtime)
+      await watcher.watchFile(filePath)
+      events.length = 0
+      const rewrite = async (next: string) => {
+        await fs.writeFile(filePath, next, 'utf8')
+        await fs.utimes(filePath, mtime, mtime)
+        await watcher.scanNow()
+      }
+      const cleanup = async () => {
+        watcher.stop()
+        await fs.rm(tmpDir, { recursive: true, force: true })
+      }
+      return { events, rewrite, cleanup }
+    }
+
+    it('detects a size change even if the mtime is identical', async () => {
+      const t = await trackWithPinnedMtime('# Racy Plan\n\nv1\n', OLD_MTIME)
+      try {
+        await t.rewrite('# Racy Plan\n\nv1 plus more text\n')
+        assert.deepEqual(t.events.map((e) => e.type), ['plan:updated'])
+      } finally {
+        await t.cleanup()
+      }
+    })
+
+    it('rehashes a same-size rewrite whose mtime is still recent', async () => {
+      const recent = new Date(Math.floor(Date.now() / 1000) * 1000)
+      const t = await trackWithPinnedMtime('# Racy Plan\n\nAAAA\n', recent)
+      try {
+        await t.rewrite('# Racy Plan\n\nBBBB\n')
+        assert.deepEqual(t.events.map((e) => e.type), ['plan:updated'])
+        assert.match(t.events[0]!.artifact.content, /BBBB/)
+      } finally {
+        await t.cleanup()
+      }
+    })
+
+    it('emits nothing when an old file is rewritten with identical content', async () => {
+      const t = await trackWithPinnedMtime('# Racy Plan\n\nsame\n', OLD_MTIME)
+      try {
+        await t.rewrite('# Racy Plan\n\nsame\n')
+        await t.rewrite('# Racy Plan\n\nsame\n')
+        assert.deepEqual(t.events, [])
+      } finally {
+        await t.cleanup()
+      }
+    })
+  })
+
   it('reports all configured watched paths in getWatchedPaths()', () => {
     const watcher = new PlanWatcher({
       homeDir: '/mock/home',
