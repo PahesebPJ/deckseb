@@ -1,6 +1,6 @@
 [package]
 name = "deckseb-desktop"
-version = "0.2.2"
+version = "0.2.3"
 description = "Native desktop shell for deckseb (Tauri 2 + Node SEA sidecar)"
 authors = ["PahesebPJ"]
 edition = "2021"
